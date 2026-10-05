@@ -1,4 +1,4 @@
-import { ChevronLeft, ChevronRight } from "lucide-react";
+import { ChevronLeft, ChevronRight, Clock } from "lucide-react";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { prisma } from "@/lib/db";
@@ -13,6 +13,8 @@ import { ActionForm } from "@/components/ActionForm";
 import { MoneyInput } from "@/components/MoneyInput";
 import { NavInput } from "@/components/NavInput";
 import { DailyChecklist } from "@/components/DailyChecklist";
+import { FormDialog } from "@/components/FormDialog";
+import { PageHeader } from "@/components/PageHeader";
 import { ShiftCard } from "./ShiftCard";
 
 export default async function DayPage({ params }: { params: Promise<{ date: string }> }) {
@@ -55,37 +57,60 @@ export default async function DayPage({ params }: { params: Promise<{ date: stri
 
   const day = summarize(shifts.flatMap((s) => s.transactions));
   const hasOpenShift = shifts.some((s) => s.userId === me.id && !s.closedAt);
-  const canOpenShift = !hasOpenShift && (isAdmin || date === today);
+  // Chỉ nhân viên vào ca (admin chỉ xem / quản lý ca của nhân viên)
+  const canOpenShift = !isAdmin && !hasOpenShift && date === today;
   const hadShift = shifts.some((s) => s.userId === me.id);
   const bankAccounts = accounts.map((a) => a.bankAccount!).filter(Boolean);
 
+  const openShiftDialog = (
+    <FormDialog title={`Vào ca — ${me.name}`} triggerLabel={hadShift ? "Vào ca mới" : "Vào ca"}>
+      <ActionForm action={openShift} submitLabel="Bắt đầu ca" successMessage="Đã vào ca." className="grid gap-3 sm:grid-cols-2">
+        <input type="hidden" name="date" value={date} />
+        <label className="field">
+          <span>Giờ đi làm *</span>
+          <input
+            name="checkIn"
+            type="time"
+            required
+            defaultValue={date === today ? nowTimeVN() : "08:00"}
+            className="input"
+          />
+        </label>
+        <label className="field">
+          <span>Tiền nhận đầu ca *</span>
+          <MoneyInput name="openingCash" required />
+        </label>
+      </ActionForm>
+    </FormDialog>
+  );
+
   return (
     <div className="space-y-5">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-bold">{formatDateLong(date)}</h1>
-          <p className="text-sm text-slate-500">
-            {branch.name}
-            {date === today && " · Hôm nay"}
-          </p>
-        </div>
-        {isAdmin && (
-          <div className="flex items-center gap-2">
-            <Link href={`/day/${addDays(date, -1)}`} className="btn-secondary" aria-label="Ngày trước">
-              <ChevronLeft size={16} aria-hidden />
-            </Link>
-            <NavInput type="date" value={date} hrefPrefix="/day/" label="Chọn ngày" />
-            <Link href={`/day/${addDays(date, 1)}`} className="btn-secondary" aria-label="Ngày sau">
-              <ChevronRight size={16} aria-hidden />
-            </Link>
-            {date !== today && (
-              <Link href={`/day/${today}`} className="btn-secondary">
-                Hôm nay
-              </Link>
+      <PageHeader
+        title={formatDateLong(date)}
+        subtitle={`${branch.name}${date === today ? " · Hôm nay" : ""}`}
+        actions={
+          <>
+            {isAdmin && (
+              <div className="flex items-center gap-2">
+                <Link href={`/day/${addDays(date, -1)}`} className="btn-secondary" aria-label="Ngày trước">
+                  <ChevronLeft size={16} aria-hidden />
+                </Link>
+                <NavInput type="date" value={date} hrefPrefix="/day/" label="Chọn ngày" />
+                <Link href={`/day/${addDays(date, 1)}`} className="btn-secondary" aria-label="Ngày sau">
+                  <ChevronRight size={16} aria-hidden />
+                </Link>
+                {date !== today && (
+                  <Link href={`/day/${today}`} className="btn-secondary">
+                    Hôm nay
+                  </Link>
+                )}
+              </div>
             )}
-          </div>
-        )}
-      </div>
+            {canOpenShift && hadShift && openShiftDialog}
+          </>
+        }
+      />
 
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         <Stat label="Doanh thu ngày" value={formatVND(day.total)} sub={`${day.count} giao dịch`} strong />
@@ -96,33 +121,23 @@ export default async function DayPage({ params }: { params: Promise<{ date: stri
 
       <DailyChecklist date={date} items={checklistItems} editable={isAdmin || date === today} />
 
-      {canOpenShift && (
-        <details open={!hadShift} className="card border-blue-200 bg-blue-50/40">
-          <summary className="cursor-pointer font-semibold">
-            {hadShift ? "+ Vào ca mới" : "Vào ca"} — {me.name}
-          </summary>
-          <ActionForm action={openShift} submitLabel="Bắt đầu ca" className="mt-3 grid gap-3 sm:grid-cols-3">
-            <input type="hidden" name="date" value={date} />
-            <label className="field">
-              <span>Giờ đi làm *</span>
-              <input
-                name="checkIn"
-                type="time"
-                required
-                defaultValue={date === today ? nowTimeVN() : "08:00"}
-                className="input"
-              />
-            </label>
-            <label className="field">
-              <span>Tiền nhận đầu ca *</span>
-              <MoneyInput name="openingCash" required />
-            </label>
-          </ActionForm>
-        </details>
+      {canOpenShift && !hadShift && (
+        <div className="card flex flex-col items-center gap-3 py-8 text-center">
+          <span className="flex size-12 items-center justify-center rounded-full bg-blue-50 text-[#1677ff]">
+            <Clock size={24} aria-hidden />
+          </span>
+          <div>
+            <p className="font-semibold">Bạn chưa vào ca hôm nay</p>
+            <p className="text-sm text-slate-500">Nhập giờ đi làm và tiền nhận đầu ca để bắt đầu bán hàng.</p>
+          </div>
+          {openShiftDialog}
+        </div>
       )}
 
       {shifts.length === 0 && !canOpenShift && (
-        <p className="card text-center text-slate-500">Không có ca làm việc nào trong ngày này.</p>
+        <p className="card text-center text-slate-500">
+          {isAdmin ? "Chưa có nhân viên nào vào ca trong ngày này." : "Không có ca làm việc nào trong ngày này."}
+        </p>
       )}
 
       {shifts.map((s) => (

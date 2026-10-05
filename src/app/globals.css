@@ -7,40 +7,44 @@
 }
 
 body {
-  background: #f1f5f9;
+  background: #f5f5f5;
   color: #0f172a;
+  -webkit-tap-highlight-color: transparent;
 }
 
 @layer components {
   .card {
-    @apply rounded-xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5;
+    @apply rounded-lg border border-slate-200/70 bg-white p-4 shadow-[0_1px_2px_rgba(0,0,0,0.03),0_1px_6px_-1px_rgba(0,0,0,0.02)] sm:p-5;
   }
   .input {
-    @apply w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100;
+    @apply h-10 w-full rounded-md border border-slate-300 bg-white px-3 text-sm transition outline-none placeholder:text-slate-400 hover:border-[#4096ff] focus:border-[#1677ff] focus:ring-2 focus:ring-[#1677ff]/15;
   }
   .field {
     @apply flex flex-col gap-1 text-sm;
   }
   .field > span {
-    @apply font-medium text-slate-600;
+    @apply text-slate-700;
   }
   .btn-primary {
-    @apply rounded-md bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-60;
+    @apply inline-flex h-10 items-center justify-center gap-1.5 rounded-md bg-[#1677ff] px-4 text-sm font-medium text-white shadow-[0_2px_0_rgba(5,145,255,0.1)] transition hover:bg-[#4096ff] active:bg-[#0958d9] disabled:opacity-60;
   }
   .btn-secondary {
-    @apply rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50;
+    @apply inline-flex h-10 items-center justify-center gap-1.5 rounded-md border border-slate-300 bg-white px-3 text-sm text-slate-700 transition hover:border-[#4096ff] hover:text-[#1677ff];
   }
   .table {
     @apply w-full text-left text-sm;
   }
   .table th {
-    @apply border-b border-slate-200 px-3 py-2 font-medium whitespace-nowrap text-slate-500;
+    @apply border-b border-slate-200 bg-slate-50/60 px-3 py-2.5 font-medium whitespace-nowrap text-slate-600;
   }
   .table td {
-    @apply border-b border-slate-100 px-3 py-2 align-top;
+    @apply border-b border-slate-100 px-3 py-2.5 align-top;
   }
   .badge {
-    @apply inline-block rounded px-1.5 py-0.5 text-xs font-medium whitespace-nowrap;
+    @apply inline-block rounded px-2 py-0.5 text-xs font-medium whitespace-nowrap;
+  }
+  .table tbody tr {
+    @apply transition-colors hover:bg-slate-50/70;
   }
 }
 
@@ -62,5 +66,93 @@ body {
   }
   to {
     transform: scaleX(0.95);
+  }
+}
+
+/*
+ * Bảng → danh sách thẻ trên điện thoại (< 640px).
+ * Mỗi <tr> thành một thẻ; mỗi <td data-label="..."> hiện "Nhãn ........ giá trị".
+ * <td data-title> là dòng tiêu đề của thẻ (không có nhãn). Ô có nhiều phần tử con thì bọc trong 1 thẻ.
+ * Ô không có data-label (vd nút Sửa/Xoá) căn phải, không nhãn.
+ */
+@media (max-width: 639px) {
+  .table thead {
+    display: none;
+  }
+  .table,
+  .table tbody,
+  .table tfoot,
+  .table tr {
+    display: block;
+    width: 100%;
+  }
+  .table tr {
+    border-bottom: 1px solid #e2e8f0;
+    padding: 0.75rem 1rem;
+  }
+  .table tbody tr:last-child {
+    border-bottom: 0;
+  }
+  .table td {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 0.75rem;
+    border: 0;
+    padding: 0.125rem 0;
+    text-align: right;
+  }
+  .table td[data-label]::before {
+    content: attr(data-label);
+    flex-shrink: 0;
+    font-size: 0.75rem;
+    color: #64748b;
+    text-align: left;
+  }
+  .table td[data-title] {
+    justify-content: flex-start;
+    padding-bottom: 0.25rem;
+    font-size: 0.9375rem;
+    font-weight: 600;
+    text-align: left;
+  }
+  .table td:not([data-label]):not([data-title]) {
+    justify-content: flex-end;
+  }
+  .table td:empty {
+    display: none;
+  }
+  .table td[colspan] {
+    justify-content: center;
+    text-align: center;
+  }
+  .table tfoot tr {
+    border-top: 1px solid #e2e8f0;
+    border-bottom: 0;
+  }
+}
+
+/* Hộp thoại form (FormDialog) */
+.form-dialog::backdrop {
+  background: rgb(0 0 0 / 0.45);
+}
+.form-dialog[open] {
+  animation: dialog-in 0.18s ease-out;
+}
+@keyframes dialog-in {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+}
+
+/* Toast */
+.toast-in {
+  animation: toast-in 0.2s ease-out;
+}
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
   }
 }

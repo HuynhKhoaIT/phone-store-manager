@@ -160,8 +160,10 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
                   .sort((a, b) => b[1] - a[1])
                   .map(([acc, amount]) => (
                     <tr key={acc}>
-                      <td>{acc}</td>
-                      <td className="text-right tabular-nums">{formatVND(amount)}</td>
+                      <td data-title>{acc}</td>
+                      <td data-label="Số tiền" className="text-right tabular-nums">
+                        {formatVND(amount)}
+                      </td>
                     </tr>
                   ))}
               </tbody>
@@ -226,11 +228,15 @@ function RankTable({
       <tbody>
         {rows.map(([name, v]) => (
           <tr key={name}>
-            <td>{name}</td>
-            <td className="text-right tabular-nums">{v.count}</td>
-            <td className="text-right font-medium tabular-nums">{formatVND(v.total)}</td>
+            <td data-title>{name}</td>
+            <td data-label="Số lượng" className="text-right tabular-nums">
+              {v.count}
+            </td>
+            <td data-label="Doanh thu" className="text-right font-medium tabular-nums">
+              {formatVND(v.total)}
+            </td>
             {total != null && (
-              <td className="text-right text-slate-500 tabular-nums">
+              <td data-label="Tỷ trọng" className="text-right text-slate-500 tabular-nums">
                 {total ? `${Math.round((v.total / total) * 100)}%` : "—"}
               </td>
             )}

@@ -1,9 +1,12 @@
 import { ArrowRight, MapPin } from "lucide-react";
 import Link from "next/link";
+import type { Branch } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { requireAdmin } from "@/lib/auth";
 import { saveBranch } from "../actions";
 import { ActionForm } from "@/components/ActionForm";
+import { FormDialog } from "@/components/FormDialog";
+import { PageHeader } from "@/components/PageHeader";
 
 export default async function BranchesPage({ searchParams }: { searchParams: Promise<{ edit?: string }> }) {
   await requireAdmin();
@@ -22,43 +25,50 @@ export default async function BranchesPage({ searchParams }: { searchParams: Pro
     orderBy: { name: "asc" },
   });
 
+  const renderForm = (editing?: Branch) => (
+    <ActionForm
+      action={saveBranch}
+      submitLabel={editing ? "Lưu thay đổi" : "Thêm chi nhánh"}
+      successMessage={editing ? "Đã lưu thay đổi." : "Đã thêm chi nhánh."}
+      className="grid gap-3 sm:grid-cols-2"
+    >
+      {editing && <input type="hidden" name="id" value={editing.id} />}
+      <label className="field sm:col-span-2">
+        <span>Tên chi nhánh *</span>
+        <input name="name" required defaultValue={editing?.name} className="input" placeholder="VD: Chi nhánh 3" />
+      </label>
+      {editing && (
+        <label className="field">
+          <span>Trạng thái</span>
+          <select name="active" defaultValue={String(editing.active)} className="input">
+            <option value="true">Đang hoạt động</option>
+            <option value="false">Ngừng hoạt động (ẩn)</option>
+          </select>
+        </label>
+      )}
+    </ActionForm>
+  );
+
   return (
     <div className="space-y-5">
-      <h1 className="text-2xl font-bold">Chi nhánh</h1>
+      <PageHeader
+        title="Chi nhánh"
+        subtitle="Thêm, đổi tên hoặc ẩn chi nhánh"
+        actions={
+          true && (
+            <FormDialog title="Thêm chi nhánh" triggerLabel="Thêm chi nhánh">
+              {renderForm()}
+            </FormDialog>
+          )
+        }
+      />
 
-      <div className="card">
-        <h2 className="mb-3 font-semibold">{editing ? `Sửa: ${editing.name}` : "Thêm chi nhánh"}</h2>
-        <ActionForm
-          key={editing?.id ?? "new"}
-          action={saveBranch}
-          submitLabel={editing ? "Lưu thay đổi" : "Thêm chi nhánh"}
-          successMessage={editing ? undefined : "Đã thêm chi nhánh."}
-          redirectTo={editing ? "/branches" : undefined}
-          className="grid gap-3 sm:grid-cols-3"
-          extraButtons={
-            editing && (
-              <Link href="/branches" className="btn-secondary">
-                Huỷ
-              </Link>
-            )
-          }
-        >
-          {editing && <input type="hidden" name="id" value={editing.id} />}
-          <label className="field sm:col-span-2">
-            <span>Tên chi nhánh *</span>
-            <input name="name" required defaultValue={editing?.name} className="input" placeholder="VD: Chi nhánh 3" />
-          </label>
-          {editing && (
-            <label className="field">
-              <span>Trạng thái</span>
-              <select name="active" defaultValue={String(editing.active)} className="input">
-                <option value="true">Đang hoạt động</option>
-                <option value="false">Ngừng hoạt động (ẩn)</option>
-              </select>
-            </label>
-          )}
-        </ActionForm>
-      </div>
+      {editing && (
+        <FormDialog key={editing.id} title={`Sửa: ${editing.name}`} defaultOpen closeHref={"/branches"}>
+          {renderForm(editing)}
+        </FormDialog>
+      )}
+
 
       <div className="grid gap-3 md:grid-cols-2">
         {branches.map((b) => (

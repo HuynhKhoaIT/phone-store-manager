@@ -1,10 +1,12 @@
 import Link from "next/link";
-import type { Prisma } from "@prisma/client";
+import type { Prisma, RepairPrice } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { requireUser } from "@/lib/auth";
 import { formatVND } from "@/lib/format";
 import { deleteRepairPrice, saveRepairPrice } from "../actions";
 import { ActionForm } from "@/components/ActionForm";
+import { FormDialog } from "@/components/FormDialog";
+import { PageHeader } from "@/components/PageHeader";
 import { ConfirmButton } from "@/components/ConfirmButton";
 import { MoneyInput } from "@/components/MoneyInput";
 
@@ -47,73 +49,76 @@ export default async function RepairPricesPage({ searchParams }: { searchParams:
   };
   const backHref = qs({});
 
+  const renderForm = (editing?: RepairPrice) => (
+    <ActionForm
+      action={saveRepairPrice}
+      submitLabel={editing ? "Lưu thay đổi" : "Thêm"}
+      successMessage={editing ? "Đã lưu thay đổi." : "Đã thêm."}
+      className="grid gap-3 sm:grid-cols-2"
+    >
+      {editing && <input type="hidden" name="id" value={editing.id} />}
+      <label className="field">
+        <span>Dịch vụ *</span>
+        <input
+          name="service"
+          required
+          list="repair-services"
+          defaultValue={editing?.service ?? service}
+          className="input"
+          placeholder="VD: Thay pin"
+        />
+        <datalist id="repair-services">
+          {suggestions.map((s) => (
+            <option key={s} value={s} />
+          ))}
+        </datalist>
+      </label>
+      <label className="field">
+        <span>Dòng máy *</span>
+        <input name="device" required defaultValue={editing?.device} className="input" placeholder="VD: iPhone 11" />
+      </label>
+      <label className="field">
+        <span>Giá *</span>
+        <MoneyInput name="price" required defaultValue={editing?.price} />
+      </label>
+      <label className="field">
+        <span>Bảo hành</span>
+        <input name="warranty" defaultValue={editing?.warranty ?? ""} className="input" placeholder="VD: 6 tháng" />
+      </label>
+      <label className="field">
+        <span>Ghi chú</span>
+        <input name="note" defaultValue={editing?.note ?? ""} className="input" placeholder="VD: linh kiện zin" />
+      </label>
+    </ActionForm>
+  );
+
   return (
     <div className="space-y-5">
-      <h1 className="text-2xl font-bold">Bảng giá sửa chữa</h1>
+      <PageHeader
+        title="Bảng giá sửa chữa"
+        subtitle="Thay pin, thay màn hình, ép kính... theo dòng máy"
+        actions={
+          isAdmin && (
+            <FormDialog title="Thêm giá sửa chữa" triggerLabel="Thêm giá">
+              {renderForm()}
+            </FormDialog>
+          )
+        }
+      />
 
-      {isAdmin && (
-        <details open={!!editing} className="card">
-          <summary className="cursor-pointer font-semibold">
-            {editing ? `Sửa: ${editing.service} ${editing.device}` : "+ Thêm giá sửa chữa"}
-          </summary>
-          <ActionForm
-            key={editing?.id ?? "new"}
-            action={saveRepairPrice}
-            submitLabel={editing ? "Lưu thay đổi" : "Thêm"}
-            successMessage={editing ? undefined : "Đã thêm."}
-            redirectTo={editing ? backHref : undefined}
-            className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-5"
-            extraButtons={
-              editing && (
-                <Link href={backHref} className="btn-secondary">
-                  Huỷ
-                </Link>
-              )
-            }
-          >
-            {editing && <input type="hidden" name="id" value={editing.id} />}
-            <label className="field">
-              <span>Dịch vụ *</span>
-              <input
-                name="service"
-                required
-                list="repair-services"
-                defaultValue={editing?.service ?? service}
-                className="input"
-                placeholder="VD: Thay pin"
-              />
-              <datalist id="repair-services">
-                {suggestions.map((s) => (
-                  <option key={s} value={s} />
-                ))}
-              </datalist>
-            </label>
-            <label className="field">
-              <span>Dòng máy *</span>
-              <input name="device" required defaultValue={editing?.device} className="input" placeholder="VD: iPhone 11" />
-            </label>
-            <label className="field">
-              <span>Giá *</span>
-              <MoneyInput name="price" required defaultValue={editing?.price} />
-            </label>
-            <label className="field">
-              <span>Bảo hành</span>
-              <input name="warranty" defaultValue={editing?.warranty ?? ""} className="input" placeholder="VD: 6 tháng" />
-            </label>
-            <label className="field">
-              <span>Ghi chú</span>
-              <input name="note" defaultValue={editing?.note ?? ""} className="input" placeholder="VD: linh kiện zin" />
-            </label>
-          </ActionForm>
-        </details>
+      {editing && (
+        <FormDialog key={editing.id} title={`Sửa: ${editing.service} ${editing.device}`} defaultOpen closeHref={backHref}>
+          {renderForm(editing)}
+        </FormDialog>
       )}
+
 
       <div className="flex flex-wrap items-center gap-2">
         {["", ...serviceNames].map((s) => (
           <Link
             key={s}
             href={qs({ service: s })}
-            className={`rounded-full px-3 py-1 text-sm font-medium ring-1 ${
+            className={`rounded-md px-3 py-1 text-sm font-medium ring-1 ${
               service === s ? "bg-slate-900 text-white ring-slate-900" : "bg-white text-slate-600 ring-slate-200 hover:text-slate-900"
             }`}
           >
@@ -147,10 +152,18 @@ export default async function RepairPricesPage({ searchParams }: { searchParams:
                 <tbody>
                   {items.map((r) => (
                     <tr key={r.id}>
-                      <td className="font-medium">{r.device}</td>
-                      <td className="text-right font-semibold whitespace-nowrap tabular-nums">{formatVND(r.price)}</td>
-                      <td className="whitespace-nowrap">{r.warranty ?? "—"}</td>
-                      <td className="text-slate-600">{r.note}</td>
+                      <td data-title className="font-medium">
+                        {r.device}
+                      </td>
+                      <td data-label="Giá" className="text-right font-semibold whitespace-nowrap tabular-nums">
+                        {formatVND(r.price)}
+                      </td>
+                      <td data-label="Bảo hành" className="whitespace-nowrap">
+                        {r.warranty ?? "—"}
+                      </td>
+                      <td data-label="Ghi chú" className="text-slate-600">
+                        {r.note}
+                      </td>
                       {isAdmin && (
                         <td className="space-x-3 text-right whitespace-nowrap">
                           <Link href={qs({ edit: String(r.id) })} className="text-sm text-blue-600 hover:underline">

@@ -136,12 +136,12 @@ export function DailyRevenueChart({ data }: { data: DailyPoint[] }) {
                 .filter((d) => d.sale + d.repair > 0)
                 .map((d) => (
                   <tr key={d.date}>
-                    <td>
+                    <td data-title>
                       {d.date.slice(8)}/{d.date.slice(5, 7)}
                     </td>
-                    <td className="text-right tabular-nums">{fmt(d.sale)}</td>
-                    <td className="text-right tabular-nums">{fmt(d.repair)}</td>
-                    <td className="text-right font-semibold tabular-nums">{fmt(d.sale + d.repair)}</td>
+                    <td data-label="Bán hàng" className="text-right tabular-nums">{fmt(d.sale)}</td>
+                    <td data-label="Sửa chữa" className="text-right tabular-nums">{fmt(d.repair)}</td>
+                    <td data-label="Tổng" className="text-right font-semibold tabular-nums">{fmt(d.sale + d.repair)}</td>
                   </tr>
                 ))}
             </tbody>

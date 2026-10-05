@@ -48,9 +48,9 @@ function MenuSection({ title, items }: { title?: string; items: NavItem[] }) {
             <li key={item.href}>
               <Link
                 href={item.href}
-                className="flex items-center gap-3 rounded-xl border border-slate-200 bg-white p-3 shadow-sm transition active:scale-[0.98] hover:border-blue-300 hover:shadow sm:p-4"
+                className="flex items-center gap-3 rounded-lg border border-slate-200 bg-white p-3 shadow-sm transition active:scale-[0.98] hover:border-blue-300 hover:shadow sm:p-4"
               >
-                <span className={`flex size-11 shrink-0 items-center justify-center rounded-xl text-white ${item.tone}`}>
+                <span className={`flex size-11 shrink-0 items-center justify-center rounded-lg text-white ${item.tone}`}>
                   <Icon size={22} aria-hidden />
                 </span>
                 <span className="min-w-0 flex-1">

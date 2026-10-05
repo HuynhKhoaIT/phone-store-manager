@@ -3,6 +3,7 @@
 import { useState, useTransition, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import type { ActionResult } from "@/app/actions";
+import { toast } from "./Toaster";
 
 /**
  * Form gọi server action. Giữ nguyên dữ liệu khi lỗi, tự xoá trắng khi thành công.
@@ -28,7 +29,6 @@ export function ActionForm({
   redirectTo?: string;
 }) {
   const router = useRouter();
-  const [saved, setSaved] = useState(false);
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [seq, setSeq] = useState(0);
@@ -36,8 +36,8 @@ export function ActionForm({
   function onSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     if (confirmMessage && !confirm(confirmMessage)) return;
-    const fd = new FormData(e.currentTarget);
-    setSaved(false);
+    const form = e.currentTarget;
+    const fd = new FormData(form);
     startTransition(async () => {
       let res: ActionResult;
       try {
@@ -52,8 +52,11 @@ export function ActionForm({
       else {
         setError(null);
         setSeq((s) => s + 1);
-        setSaved(true);
-        if (redirectTo) router.push(redirectTo);
+        toast(successMessage ?? "Đã lưu thay đổi.");
+        // Nằm trong FormDialog thì đóng hộp thoại; nếu có closeHref, dialog sẽ tự điều hướng
+        const dialog = form.closest("dialog");
+        if (dialog?.open) dialog.close();
+        else if (redirectTo) router.push(redirectTo);
       }
     });
   }
@@ -68,11 +71,7 @@ export function ActionForm({
           {error}
         </p>
       )}
-      {saved && successMessage && !error && (
-        <p role="status" className="col-span-full rounded-md bg-green-50 px-3 py-2 text-sm text-green-700">
-          {successMessage}
-        </p>
-      )}
+
       <div className="col-span-full flex flex-wrap items-center gap-2">
         <button type="submit" disabled={pending} className="btn-primary">
           {pending ? "Đang lưu..." : submitLabel}

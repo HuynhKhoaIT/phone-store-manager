@@ -6,6 +6,8 @@ import { getActiveBranches, getCurrentBranch } from "@/lib/branch";
 import { addMonths, formatDate, formatMonth, isValidMonth, todayVN } from "@/lib/format";
 import { addStockTransfer, deleteStockTransfer } from "../actions";
 import { ActionForm } from "@/components/ActionForm";
+import { FormDialog } from "@/components/FormDialog";
+import { PageHeader } from "@/components/PageHeader";
 import { ConfirmButton } from "@/components/ConfirmButton";
 import { NavInput } from "@/components/NavInput";
 
@@ -28,56 +30,66 @@ export default async function TransfersPage({ searchParams }: { searchParams: Pr
   const otherBranch = branches.find((b) => b.id !== current?.id);
   const totalQty = transfers.reduce((s, t) => s + t.quantity, 0);
 
+  const renderForm = () => (
+    <ActionForm
+      action={addStockTransfer}
+      submitLabel="Lưu phiếu"
+      successMessage="Đã lưu phiếu nhập hàng."
+      className="grid gap-3 sm:grid-cols-2"
+    >
+      <label className="field">
+        <span>Ngày *</span>
+        <input name="date" type="date" required defaultValue={today} max={isAdmin ? undefined : today} className="input" />
+      </label>
+      <label className="field">
+        <span>Lấy từ *</span>
+        <select name="fromBranchId" defaultValue={otherBranch?.id} className="input">
+          {branches.map((b) => (
+            <option key={b.id} value={b.id}>
+              {b.name}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label className="field">
+        <span>Nhập về *</span>
+        <select name="toBranchId" defaultValue={current?.id} className="input">
+          {branches.map((b) => (
+            <option key={b.id} value={b.id}>
+              {b.name}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label className="field">
+        <span>Sản phẩm *</span>
+        <input name="productName" required className="input" placeholder="VD: Tai nghe ABC" />
+      </label>
+      <label className="field">
+        <span>Số lượng *</span>
+        <input name="quantity" type="number" min={1} defaultValue={1} required className="input" />
+      </label>
+      <label className="field sm:col-span-2 lg:col-span-3">
+        <span>Ghi chú</span>
+        <input name="note" className="input" />
+      </label>
+    </ActionForm>
+  );
+
   return (
     <div className="space-y-5">
-      <h1 className="text-2xl font-bold">Nhập hàng giữa chi nhánh</h1>
+      <PageHeader
+        title="Nhập hàng giữa chi nhánh"
+        subtitle="Ghi lại hàng chuyển giữa các chi nhánh"
+        actions={
+          true && (
+            <FormDialog title="Ghi phiếu nhập hàng" triggerLabel="Ghi phiếu nhập">
+              {renderForm()}
+            </FormDialog>
+          )
+        }
+      />
 
-      <div className="card">
-        <h2 className="mb-3 font-semibold">Ghi phiếu nhập hàng</h2>
-        <ActionForm
-          action={addStockTransfer}
-          submitLabel="Lưu phiếu"
-          successMessage="Đã lưu phiếu nhập hàng."
-          className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4"
-        >
-          <label className="field">
-            <span>Ngày *</span>
-            <input name="date" type="date" required defaultValue={today} max={isAdmin ? undefined : today} className="input" />
-          </label>
-          <label className="field">
-            <span>Lấy từ *</span>
-            <select name="fromBranchId" defaultValue={otherBranch?.id} className="input">
-              {branches.map((b) => (
-                <option key={b.id} value={b.id}>
-                  {b.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="field">
-            <span>Nhập về *</span>
-            <select name="toBranchId" defaultValue={current?.id} className="input">
-              {branches.map((b) => (
-                <option key={b.id} value={b.id}>
-                  {b.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="field">
-            <span>Sản phẩm *</span>
-            <input name="productName" required className="input" placeholder="VD: Tai nghe ABC" />
-          </label>
-          <label className="field">
-            <span>Số lượng *</span>
-            <input name="quantity" type="number" min={1} defaultValue={1} required className="input" />
-          </label>
-          <label className="field sm:col-span-2 lg:col-span-3">
-            <span>Ghi chú</span>
-            <input name="note" className="input" />
-          </label>
-        </ActionForm>
-      </div>
 
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h2 className="text-lg font-semibold">
@@ -98,8 +110,8 @@ export default async function TransfersPage({ searchParams }: { searchParams: Pr
         <table className="table">
           <thead>
             <tr>
-              <th>Ngày</th>
               <th>Sản phẩm</th>
+              <th>Ngày</th>
               <th className="text-right">SL</th>
               <th>Từ / Đến</th>
               <th>Người ghi</th>
@@ -110,17 +122,25 @@ export default async function TransfersPage({ searchParams }: { searchParams: Pr
           <tbody>
             {transfers.map((t) => (
               <tr key={t.id}>
-                <td className="whitespace-nowrap">{formatDate(t.date)}</td>
-                <td className="font-medium">{t.productName}</td>
-                <td className="text-right font-semibold tabular-nums">{t.quantity}</td>
-                <td className="whitespace-nowrap">
+                <td data-title className="font-medium">
+                  {t.productName}
+                </td>
+                <td data-label="Ngày" className="whitespace-nowrap">
+                  {formatDate(t.date)}
+                </td>
+                <td data-label="Số lượng" className="text-right font-semibold tabular-nums">
+                  {t.quantity}
+                </td>
+                <td data-label="Từ / Đến" className="whitespace-nowrap">
                   <span className="inline-flex items-center gap-1">
                     {t.fromBranch.name} <ArrowRight size={14} className="text-slate-400" aria-hidden />{" "}
                     <b>{t.toBranch.name}</b>
                   </span>
                 </td>
-                <td>{t.staffName}</td>
-                <td className="text-slate-600">{t.note}</td>
+                <td data-label="Người ghi">{t.staffName}</td>
+                <td data-label="Ghi chú" className="text-slate-600">
+                  {t.note}
+                </td>
                 {isAdmin && (
                   <td>
                     <ConfirmButton action={deleteStockTransfer.bind(null, t.id)} message="Xoá phiếu nhập hàng này?">

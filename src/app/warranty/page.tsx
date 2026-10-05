@@ -66,16 +66,22 @@ export default async function WarrantyPage({ searchParams }: { searchParams: Pro
               const valid = end >= today;
               return (
                 <tr key={t.id}>
-                  <td>
-                    <div className="font-medium">{t.customerName}</div>
-                    <div className="text-xs text-slate-500">{t.customerPhone}</div>
+                  <td data-title>
+                    <div>
+                      <div className="font-medium">{t.customerName}</div>
+                      <div className="text-xs font-normal text-slate-500">{t.customerPhone}</div>
+                    </div>
                   </td>
-                  <td>
-                    {t.productName}
-                    <div className="text-xs text-slate-400">{KIND_LABEL[t.kind]}</div>
+                  <td data-label="Sản phẩm">
+                    <div>
+                      {t.productName}
+                      <div className="text-xs text-slate-400">{KIND_LABEL[t.kind]}</div>
+                    </div>
                   </td>
-                  <td className="text-right whitespace-nowrap tabular-nums">{formatVND(t.price)}</td>
-                  <td className="whitespace-nowrap">
+                  <td data-label="Giá" className="text-right whitespace-nowrap tabular-nums">
+                    {formatVND(t.price)}
+                  </td>
+                  <td data-label="Ngày mua" className="whitespace-nowrap">
                     {me.role === "ADMIN" ? (
                       <Link href={`/day/${t.shift.date}`} className="text-blue-600 hover:underline">
                         {formatDate(t.shift.date)}
@@ -84,16 +90,22 @@ export default async function WarrantyPage({ searchParams }: { searchParams: Pro
                       formatDate(t.shift.date)
                     )}
                   </td>
-                  <td className="whitespace-nowrap">{t.warrantyMonths} tháng</td>
-                  <td className="whitespace-nowrap">
-                    {formatDate(end)}
+                  <td data-label="Bảo hành" className="whitespace-nowrap">
+                    {t.warrantyMonths} tháng
+                  </td>
+                  <td data-label="Hết hạn" className="whitespace-nowrap">
                     <div>
-                      <span className={`badge ${valid ? "bg-green-100 text-green-800" : "bg-slate-100 text-slate-500"}`}>
-                        {valid ? "Còn bảo hành" : "Hết hạn"}
-                      </span>
+                      {formatDate(end)}
+                      <div>
+                        <span className={`badge ${valid ? "bg-green-100 text-green-800" : "bg-slate-100 text-slate-500"}`}>
+                          {valid ? "Còn bảo hành" : "Hết hạn"}
+                        </span>
+                      </div>
                     </div>
                   </td>
-                  <td className="whitespace-nowrap">{t.shift.branch.name}</td>
+                  <td data-label="Chi nhánh" className="whitespace-nowrap">
+                    {t.shift.branch.name}
+                  </td>
                 </tr>
               );
             })}

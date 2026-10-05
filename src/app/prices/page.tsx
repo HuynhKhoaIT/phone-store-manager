@@ -1,5 +1,5 @@
 import Link from "next/link";
-import type { Prisma } from "@prisma/client";
+import type { Prisma, Product } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { requireUser } from "@/lib/auth";
 import { CATEGORY_LABEL, CONDITION_LABEL } from "@/lib/prices";
@@ -8,6 +8,8 @@ import { deleteProduct, saveProduct } from "../actions";
 import { ActionForm } from "@/components/ActionForm";
 import { ConfirmButton } from "@/components/ConfirmButton";
 import { MoneyInput } from "@/components/MoneyInput";
+import { FormDialog } from "@/components/FormDialog";
+import { PageHeader } from "@/components/PageHeader";
 
 type Search = { cat?: string; q?: string; cond?: string; edit?: string; hidden?: string };
 
@@ -48,81 +50,37 @@ export default async function PricesPage({ searchParams }: { searchParams: Promi
 
   return (
     <div className="space-y-5">
-      <h1 className="text-2xl font-bold">Bảng giá</h1>
+      <PageHeader
+        title="Bảng giá"
+        subtitle="Giá máy iPhone, Android và phụ kiện"
+        actions={
+          isAdmin && (
+            <FormDialog title="Thêm sản phẩm vào bảng giá" triggerLabel="Thêm sản phẩm">
+              <ActionForm
+                action={saveProduct}
+                submitLabel="Thêm sản phẩm"
+                successMessage="Đã thêm sản phẩm."
+                className="grid gap-3 sm:grid-cols-2"
+              >
+                <ProductFields defaultCategory={cat || "IPHONE"} />
+              </ActionForm>
+            </FormDialog>
+          )
+        }
+      />
 
-      {isAdmin && (
-        <details open={!!editing} className="card">
-          <summary className="cursor-pointer font-semibold">
-            {editing ? `Sửa: ${editing.name}` : "+ Thêm sản phẩm vào bảng giá"}
-          </summary>
+      {editing && (
+        <FormDialog key={editing.id} title={`Sửa: ${editing.name}`} defaultOpen closeHref={backHref}>
           <ActionForm
-            key={editing?.id ?? "new"}
             action={saveProduct}
-            submitLabel={editing ? "Lưu thay đổi" : "Thêm sản phẩm"}
-            successMessage={editing ? undefined : "Đã thêm sản phẩm."}
-            redirectTo={editing ? backHref : undefined}
-            className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4"
-            extraButtons={
-              editing && (
-                <Link href={backHref} className="btn-secondary">
-                  Huỷ
-                </Link>
-              )
-            }
+            submitLabel="Lưu thay đổi"
+            successMessage="Đã cập nhật bảng giá."
+            className="grid gap-3 sm:grid-cols-2"
           >
-            {editing && <input type="hidden" name="id" value={editing.id} />}
-            <label className="field">
-              <span>Loại *</span>
-              <select name="category" defaultValue={editing?.category ?? (cat || "IPHONE")} className="input">
-                {Object.entries(CATEGORY_LABEL).map(([v, l]) => (
-                  <option key={v} value={v}>
-                    {l}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="field">
-              <span>Tên sản phẩm *</span>
-              <input name="name" required defaultValue={editing?.name} className="input" placeholder="VD: iPhone 13 Pro Max" />
-            </label>
-            <label className="field">
-              <span>Phiên bản / màu</span>
-              <input name="variant" defaultValue={editing?.variant ?? ""} className="input" placeholder="VD: 128GB - Xanh" />
-            </label>
-            <label className="field">
-              <span>Tình trạng</span>
-              <select name="condition" defaultValue={editing?.condition ?? "NEW"} className="input">
-                <option value="NEW">Mới</option>
-                <option value="USED">Cũ 99%</option>
-              </select>
-            </label>
-            <label className="field">
-              <span>Giá bán *</span>
-              <MoneyInput name="price" required defaultValue={editing?.price} />
-            </label>
-            <label className="field">
-              <span>Bảo hành mặc định</span>
-              <select name="warrantyMonths" defaultValue={editing?.warrantyMonths ?? 0} className="input">
-                {Array.from({ length: 13 }, (_, m) => (
-                  <option key={m} value={m}>
-                    {m === 0 ? "Không bảo hành" : `${m} tháng`}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="field">
-              <span>Hiển thị</span>
-              <select name="active" defaultValue={String(editing?.active ?? true)} className="input">
-                <option value="true">Đang bán</option>
-                <option value="false">Ẩn (ngừng bán)</option>
-              </select>
-            </label>
-            <label className="field">
-              <span>Ghi chú</span>
-              <input name="note" defaultValue={editing?.note ?? ""} className="input" placeholder="VD: pin 90%, máy zin" />
-            </label>
+            <input type="hidden" name="id" value={editing.id} />
+            <ProductFields product={editing} defaultCategory={editing.category} />
           </ActionForm>
-        </details>
+        </FormDialog>
       )}
 
       <div className="flex flex-wrap items-center gap-2">
@@ -254,5 +212,62 @@ export default async function PricesPage({ searchParams }: { searchParams: Promi
         </table>
       </div>
     </div>
+  );
+}
+
+function ProductFields({ product, defaultCategory }: { product?: Product; defaultCategory: string }) {
+  return (
+    <>
+      <label className="field">
+        <span>Loại *</span>
+        <select name="category" defaultValue={defaultCategory} className="input">
+          {Object.entries(CATEGORY_LABEL).map(([v, l]) => (
+            <option key={v} value={v}>
+              {l}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label className="field">
+        <span>Tên sản phẩm *</span>
+        <input name="name" required defaultValue={product?.name} className="input" placeholder="VD: iPhone 13 Pro Max" />
+      </label>
+      <label className="field">
+        <span>Phiên bản / màu</span>
+        <input name="variant" defaultValue={product?.variant ?? ""} className="input" placeholder="VD: 128GB - Xanh" />
+      </label>
+      <label className="field">
+        <span>Tình trạng</span>
+        <select name="condition" defaultValue={product?.condition ?? "NEW"} className="input">
+          <option value="NEW">Mới</option>
+          <option value="USED">Cũ 99%</option>
+        </select>
+      </label>
+      <label className="field">
+        <span>Giá bán *</span>
+        <MoneyInput name="price" required defaultValue={product?.price} />
+      </label>
+      <label className="field">
+        <span>Bảo hành mặc định</span>
+        <select name="warrantyMonths" defaultValue={product?.warrantyMonths ?? 0} className="input">
+          {Array.from({ length: 13 }, (_, m) => (
+            <option key={m} value={m}>
+              {m === 0 ? "Không bảo hành" : `${m} tháng`}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label className="field">
+        <span>Hiển thị</span>
+        <select name="active" defaultValue={String(product?.active ?? true)} className="input">
+          <option value="true">Đang bán</option>
+          <option value="false">Ẩn (ngừng bán)</option>
+        </select>
+      </label>
+      <label className="field">
+        <span>Ghi chú</span>
+        <input name="note" defaultValue={product?.note ?? ""} className="input" placeholder="VD: pin 90%, máy zin" />
+      </label>
+    </>
   );
 }

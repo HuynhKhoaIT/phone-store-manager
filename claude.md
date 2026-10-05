@@ -79,7 +79,9 @@ Giao diện (`src/components/AppShell.tsx`, danh sách menu dùng chung ở `src
 **Checklist** — `ChecklistTask` do admin tạo (`branchId` null = mọi chi nhánh). `ChecklistCheck` duy nhất theo (task, ngày, chi nhánh): mỗi việc tính một lần cho cả chi nhánh trong ngày, ghi lại ai tick và lúc nào. Nhân viên chỉ bỏ tick được việc do chính mình tick. Form chốt ca cảnh báo nếu checklist còn việc chưa xong. Việc đã ẩn vẫn hiện ở những ngày từng được tick.
 
 **Phân quyền** (`ADMIN` | `STAFF`)
-- Nhân viên chỉ thao tác trên **ngày hôm nay**, chỉ sửa **ca của mình**, không vào được `/dashboard`, `/history`, `/users`, `/branches`, `/checklist` (bị chuyển về trang bán hàng).
+- **Chỉ nhân viên vào ca.** Admin không có ca; admin xem và quản lý ca của nhân viên (thêm giao dịch vào ca đang mở, mở lại ca đã chốt).
+- **Chỉ admin được xoá giao dịch** (`deleteTransaction`); nhân viên nhập sai thì báo admin.
+- Nhân viên chỉ thao tác trên **ngày hôm nay**, chỉ sửa **ca của mình**, không vào được `/dashboard`, `/history`, `/users`, `/branches`, `/checklist` (bị chuyển về trang chủ).
 - Mọi server action **tự kiểm tra quyền** — không dựa vào việc ẩn nút trên giao diện.
 
 ## Cấu trúc code
@@ -110,7 +112,11 @@ src/components/             # Client components dùng chung
 - **Ngày** lưu dạng chuỗi `YYYY-MM-DD`, **giờ vào/ra** dạng `HH:mm`, theo giờ Việt Nam. Lấy "hôm nay" bằng `todayVN()` / `nowTimeVN()` — **không** dùng `new Date().toISOString()` (server Vercel chạy UTC, sẽ lệch ngày trước 7h sáng). Lọc theo tháng dùng `date: { startsWith: "YYYY-MM" }`.
 - **Tiền** là `Int` (đồng), không có số lẻ. Hiển thị bằng `formatVND()`. Ô nhập tiền dùng `<MoneyInput>` (tự thêm dấu chấm, gửi chuỗi chữ số qua input ẩn).
 - **Mutation**: thêm server action vào `src/app/actions.ts`, trả về `ActionResult` (`{ error?: string }`, thông báo tiếng Việt), gọi `revalidatePath` cho trang liên quan. Thứ tự: `getSessionUser()` → kiểm tra quyền → validate → ghi DB.
-- **Form**: dùng `<ActionForm action={...}>` — nó giữ nguyên dữ liệu khi lỗi, tự xoá trắng khi thành công, có `successMessage`, `confirmMessage`, `redirectTo`. Chế độ sửa dùng query `?edit=<id>`, điền sẵn bằng `defaultValue`, và đặt `key={editing?.id ?? "new"}` cho `ActionForm` để form dựng lại khi đổi bản ghi.
+- **Form thêm/sửa luôn nằm trong popup** `<FormDialog>` (kiểu antd Modal; trên điện thoại toàn màn hình). Nút "Thêm..." đặt ở `actions` của `<PageHeader>`. Chế độ sửa dùng query `?edit=<id>`: render `<FormDialog key={editing.id} defaultOpen closeHref={...}>`, đóng popup thì quay về `closeHref`. Không dùng `<details>` để ẩn/hiện form.
+- Bên trong popup dùng `<ActionForm action={...}>`: giữ nguyên dữ liệu khi lỗi, khi thành công thì xoá trắng form, **đóng popup** và hiện **toast** `successMessage` (`src/components/Toaster.tsx`, gọi `toast()` từ client).
+- Mọi trang bắt đầu bằng `<PageHeader title subtitle actions>`.
+- **Bảng trên điện thoại tự thành danh sách thẻ** (CSS trong `globals.css`): mỗi `<td>` cần `data-label="..."`, ô tiêu đề của thẻ dùng `data-title`; ô có nhiều phần tử con thì bọc trong một thẻ.
+- Bo góc theo antd 5: ô nhập/nút `rounded-md` (6px), thẻ/popup `rounded-lg` (8px), badge `rounded` (4px). Màu chính `#1677ff`.
 - **Nút xoá / thao tác nhanh**: `<ConfirmButton action={serverAction.bind(null, id)} message="...">`.
 - Trang chỉ cho admin gọi `await requireAdmin()` ở đầu; trang chung gọi `await requireUser()`.
 - Giữ class tiện ích trong `globals.css` (`card`, `input`, `field`, `btn-primary`, `btn-secondary`, `table`, `badge`) thay vì lặp chuỗi Tailwind dài.

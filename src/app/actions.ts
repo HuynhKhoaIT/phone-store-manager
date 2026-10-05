@@ -202,7 +202,8 @@ export async function openShift(fd: FormData): Promise<ActionResult> {
   const openingCash = money(fd, "openingCash");
 
   if (!isValidDate(date)) return { error: "Ngày không hợp lệ." };
-  if (!isAdmin(me) && date !== todayVN()) return { error: "Nhân viên chỉ được vào ca cho ngày hôm nay." };
+  if (isAdmin(me)) return { error: "Chỉ nhân viên mới vào ca. Admin chỉ xem và quản lý ca của nhân viên." };
+  if (date !== todayVN()) return { error: "Chỉ được vào ca cho ngày hôm nay." };
   if (!TIME_RE.test(checkIn)) return { error: "Giờ vào ca không hợp lệ." };
   if (!Number.isFinite(openingCash)) return { error: "Vui lòng nhập số tiền nhận đầu ca." };
 
@@ -270,6 +271,8 @@ export async function addTransaction(fd: FormData): Promise<ActionResult> {
 export async function deleteTransaction(id: number): Promise<ActionResult> {
   const me = await getSessionUser();
   if (!me) return NOT_LOGGED_IN;
+  // Chỉ admin được xoá giao dịch; nhân viên nhập sai thì báo admin xoá
+  if (!isAdmin(me)) return NO_PERMISSION;
   const tx = await prisma.transaction.findUnique({ where: { id } });
   if (!tx) return { error: "Không tìm thấy giao dịch." };
   const found = await getEditableShift(me, tx.shiftId);

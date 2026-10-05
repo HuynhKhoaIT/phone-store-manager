@@ -1,11 +1,14 @@
 import { ChevronDown, ChevronUp, MapPin } from "lucide-react";
 import Link from "next/link";
+import type { ChecklistTask } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { requireAdmin } from "@/lib/auth";
 import { getActiveBranches } from "@/lib/branch";
 import { todayVN } from "@/lib/format";
 import { deleteChecklistTask, moveChecklistTask, saveChecklistTask } from "../actions";
 import { ActionForm } from "@/components/ActionForm";
+import { FormDialog } from "@/components/FormDialog";
+import { PageHeader } from "@/components/PageHeader";
 import { ConfirmButton } from "@/components/ConfirmButton";
 
 const SUGGESTIONS = ["Chấm công", "Vệ sinh quán", "Kiểm tra hàng hoá", "Tưới cây", "Đăng bài Facebook", "Đăng bài TikTok", "Chốt ngày"];
@@ -32,92 +35,82 @@ export default async function ChecklistPage({ searchParams }: { searchParams: Pr
     return { branch: b, done, total: applicable.length };
   });
 
+  const renderForm = (editing?: ChecklistTask) => (
+    <ActionForm
+      action={saveChecklistTask}
+      submitLabel={editing ? "Lưu thay đổi" : "Thêm công việc"}
+      successMessage={editing ? "Đã lưu thay đổi." : "Đã thêm công việc."}
+      className="grid gap-3 sm:grid-cols-2"
+    >
+      {editing && <input type="hidden" name="id" value={editing.id} />}
+      <label className="field">
+        <span>Tên công việc *</span>
+        <input
+          name="title"
+          required
+          list="task-suggestions"
+          defaultValue={editing?.title}
+          className="input"
+          placeholder="VD: Vệ sinh quán"
+        />
+        <datalist id="task-suggestions">
+          {SUGGESTIONS.filter((s) => !existingTitles.has(s.toLowerCase())).map((s) => (
+            <option key={s} value={s} />
+          ))}
+        </datalist>
+      </label>
+      <label className="field">
+        <span>Hướng dẫn / ghi chú</span>
+        <input
+          name="description"
+          defaultValue={editing?.description ?? ""}
+          className="input"
+          placeholder="VD: trước 9h sáng"
+        />
+      </label>
+      <label className="field">
+        <span>Áp dụng cho</span>
+        <select name="branchId" defaultValue={editing?.branchId ?? ""} className="input">
+          <option value="">Tất cả chi nhánh</option>
+          {branches.map((b) => (
+            <option key={b.id} value={b.id}>
+              {b.name}
+            </option>
+          ))}
+        </select>
+      </label>
+      {editing && (
+        <label className="field">
+          <span>Trạng thái</span>
+          <select name="active" defaultValue={String(editing.active)} className="input">
+            <option value="true">Đang áp dụng</option>
+            <option value="false">Tạm ẩn</option>
+          </select>
+        </label>
+      )}
+    </ActionForm>
+  );
+
   return (
     <div className="space-y-5">
-      <h1 className="text-2xl font-bold">Checklist công việc hằng ngày</h1>
+      <PageHeader
+        title="Checklist công việc"
+        subtitle="Việc nhân viên cần làm mỗi ngày"
+        actions={
+          true && (
+            <FormDialog title="Thêm công việc" triggerLabel="Thêm công việc">
+              {renderForm()}
+            </FormDialog>
+          )
+        }
+      />
 
-      {progress.some((p) => p.total > 0) && (
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {progress.map((p) => (
-            <div key={p.branch.id} className="card">
-              <p className="flex items-center gap-1 text-xs font-medium text-slate-500">
-                Hôm nay · <MapPin size={12} aria-hidden /> {p.branch.name}
-              </p>
-              <p
-                className={`mt-1 text-xl font-bold tabular-nums ${p.total && p.done === p.total ? "text-green-700" : ""}`}
-              >
-                {p.done}/{p.total} việc
-              </p>
-            </div>
-          ))}
-        </div>
+      {editing && (
+        <FormDialog key={editing.id} title={`Sửa: ${editing.title}`} defaultOpen closeHref={"/checklist"}>
+          {renderForm(editing)}
+        </FormDialog>
       )}
 
-      <div className="card">
-        <h2 className="mb-3 font-semibold">{editing ? `Sửa: ${editing.title}` : "Thêm công việc"}</h2>
-        <ActionForm
-          key={editing?.id ?? "new"}
-          action={saveChecklistTask}
-          submitLabel={editing ? "Lưu thay đổi" : "Thêm công việc"}
-          successMessage={editing ? undefined : "Đã thêm công việc."}
-          redirectTo={editing ? "/checklist" : undefined}
-          className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4"
-          extraButtons={
-            editing && (
-              <Link href="/checklist" className="btn-secondary">
-                Huỷ
-              </Link>
-            )
-          }
-        >
-          {editing && <input type="hidden" name="id" value={editing.id} />}
-          <label className="field">
-            <span>Tên công việc *</span>
-            <input
-              name="title"
-              required
-              list="task-suggestions"
-              defaultValue={editing?.title}
-              className="input"
-              placeholder="VD: Vệ sinh quán"
-            />
-            <datalist id="task-suggestions">
-              {SUGGESTIONS.filter((s) => !existingTitles.has(s.toLowerCase())).map((s) => (
-                <option key={s} value={s} />
-              ))}
-            </datalist>
-          </label>
-          <label className="field">
-            <span>Hướng dẫn / ghi chú</span>
-            <input
-              name="description"
-              defaultValue={editing?.description ?? ""}
-              className="input"
-              placeholder="VD: trước 9h sáng"
-            />
-          </label>
-          <label className="field">
-            <span>Áp dụng cho</span>
-            <select name="branchId" defaultValue={editing?.branchId ?? ""} className="input">
-              <option value="">Tất cả chi nhánh</option>
-              {branches.map((b) => (
-                <option key={b.id} value={b.id}>
-                  {b.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          {editing && (
-            <label className="field">
-              <span>Trạng thái</span>
-              <select name="active" defaultValue={String(editing.active)} className="input">
-                <option value="true">Đang áp dụng</option>
-                <option value="false">Tạm ẩn</option>
-              </select>
-            </label>
-          )}
-        </ActionForm>
-      </div>
 
       <div className="card p-0 sm:p-0">
         {tasks.length === 0 ? (

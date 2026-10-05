@@ -27,11 +27,17 @@ export default async function TimesheetPage({ searchParams }: { searchParams: Pr
   const sp = await searchParams;
   const month = sp.month && isValidMonth(sp.month) ? sp.month : todayVN().slice(0, 7);
 
-  // Nhân viên chỉ xem của mình; admin chọn được người khác
+  // Nhân viên chỉ xem của mình; admin chọn nhân viên để xem (admin không vào ca)
   const staffList = isAdmin
-    ? await prisma.user.findMany({ select: { id: true, name: true, active: true }, orderBy: [{ active: "desc" }, { name: "asc" }] })
+    ? await prisma.user.findMany({
+        where: { role: "STAFF" },
+        select: { id: true, name: true, active: true },
+        orderBy: [{ active: "desc" }, { name: "asc" }],
+      })
     : [];
-  const userId = isAdmin && staffList.some((u) => u.id === Number(sp.user)) ? Number(sp.user) : me.id;
+  const userId = isAdmin
+    ? (staffList.find((u) => u.id === Number(sp.user)) ?? staffList[0])?.id ?? me.id
+    : me.id;
   const userName = staffList.find((u) => u.id === userId)?.name ?? me.name;
 
   const shifts = await prisma.shift.findMany({
@@ -130,7 +136,7 @@ export default async function TimesheetPage({ searchParams }: { searchParams: Pr
           <tbody>
             {rows.map((r) => (
               <tr key={r.id}>
-                <td className="whitespace-nowrap">
+                <td data-title className="whitespace-nowrap">
                   {isAdmin ? (
                     <Link href={`/day/${r.date}`} className="text-blue-600 hover:underline">
                       {formatDateLong(r.date)}
@@ -139,12 +145,14 @@ export default async function TimesheetPage({ searchParams }: { searchParams: Pr
                     formatDateLong(r.date)
                   )}
                 </td>
-                <td>{r.branch.name}</td>
-                <td className="tabular-nums">{r.checkIn}</td>
-                <td className="tabular-nums">
+                <td data-label="Chi nhánh">{r.branch.name}</td>
+                <td data-label="Giờ vào" className="tabular-nums">
+                  {r.checkIn}
+                </td>
+                <td data-label="Giờ ra" className="tabular-nums">
                   {r.checkOut ?? <span className="badge bg-green-100 text-green-700">Đang làm</span>}
                 </td>
-                <td className="text-right font-medium tabular-nums">
+                <td data-label="Số giờ" className="text-right font-medium tabular-nums">
                   {r.minutes != null ? formatHours(r.minutes) : "—"}
                 </td>
               </tr>
@@ -160,10 +168,12 @@ export default async function TimesheetPage({ searchParams }: { searchParams: Pr
           {rows.length > 0 && (
             <tfoot>
               <tr className="font-semibold">
-                <td colSpan={4} className="px-3 py-2">
+                <td colSpan={4} className="px-3 py-2 max-sm:hidden">
                   Tổng cộng ({workDays} ngày)
                 </td>
-                <td className="px-3 py-2 text-right tabular-nums">{formatHours(totalMinutes)}</td>
+                <td data-label={`Tổng cộng (${workDays} ngày)`} className="px-3 py-2 text-right tabular-nums">
+                  {formatHours(totalMinutes)}
+                </td>
               </tr>
             </tfoot>
           )}

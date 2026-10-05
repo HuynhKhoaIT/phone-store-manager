@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import { logout } from "@/app/actions";
 import { SIDER_COOKIE } from "@/lib/ui";
+import { Toaster } from "./Toaster";
 import { ADMIN_LINKS, HOME_ITEM, STAFF_LINKS, breadcrumbFor, type NavItem } from "@/lib/nav";
 
 /**
@@ -75,6 +76,7 @@ export function AppShell({
   return (
     <div className="min-h-screen bg-[#f5f5f5]">
       {navigating && <div className="nav-progress" role="progressbar" aria-label="Đang tải trang" />}
+      <Toaster />
 
       {/* ---------- Sider (chỉ máy tính) ---------- */}
       <aside

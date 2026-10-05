@@ -1,10 +1,11 @@
-import { TriangleAlert } from "lucide-react";
+import { LogOut, TriangleAlert } from "lucide-react";
 import type { Shift, Transaction } from "@prisma/client";
 import { summarize } from "@/lib/summary";
 import { formatTimeVN, formatVND, KIND_LABEL } from "@/lib/format";
 import { addTransaction, closeShift, deleteTransaction, reopenShift } from "../../actions";
 import { ActionForm } from "@/components/ActionForm";
 import { ConfirmButton } from "@/components/ConfirmButton";
+import { FormDialog } from "@/components/FormDialog";
 import { MoneyInput } from "@/components/MoneyInput";
 import { TransactionFields, type PriceSuggestion } from "@/components/TransactionFields";
 
@@ -30,6 +31,8 @@ export function ShiftCard({
   const sum = summarize(shift.transactions);
   const expectedCash = shift.openingCash + sum.cash;
   const closed = !!shift.closedAt;
+  // Chỉ admin được xoá giao dịch (khi ca còn mở)
+  const canDelete = canEdit && isAdmin;
   const diff = (shift.handoverCash ?? 0) - expectedCash;
 
   return (
@@ -57,6 +60,65 @@ export function ShiftCard({
             Mở lại ca
           </ConfirmButton>
         )}
+        {canEdit && (
+          <div className="flex w-full gap-2 sm:w-auto [&>button]:flex-1 sm:[&>button]:flex-none">
+            <FormDialog title="Thêm giao dịch" triggerLabel="Thêm giao dịch">
+              <ActionForm
+                action={addTransaction}
+                submitLabel="Lưu giao dịch"
+                successMessage="Đã lưu giao dịch."
+                className="grid gap-3 sm:grid-cols-2"
+              >
+                <TransactionFields
+                  shiftId={shift.id}
+                  bankAccounts={bankAccounts}
+                  saleSuggestions={saleSuggestions}
+                  repairSuggestions={repairSuggestions}
+                />
+              </ActionForm>
+            </FormDialog>
+            <FormDialog
+              title="Kết thúc ca / Bàn giao"
+              triggerLabel="Kết thúc ca"
+              triggerVariant="secondary"
+              triggerIcon={<LogOut size={16} aria-hidden />}
+            >
+              <div className="space-y-2 text-sm">
+                {checklistLeft > 0 && (
+                  <p className="rounded-md bg-amber-100 px-3 py-2 text-sm text-amber-800">
+                    <TriangleAlert size={16} className="mr-1 inline align-text-bottom" aria-hidden />
+                    Còn {checklistLeft} việc trong checklist hôm nay chưa hoàn thành.
+                  </p>
+                )}
+                <p className="mt-2 text-sm text-slate-600">
+                  Tiền mặt phải có = nhận đầu ca {formatVND(shift.openingCash)} + tiền mặt bán được {formatVND(sum.cash)} ={" "}
+                  <b>{formatVND(expectedCash)}</b>
+                </p>
+                <ActionForm
+                  action={closeShift}
+                  submitLabel="Chốt ca"
+                  successMessage="Đã chốt ca."
+                  confirmMessage="Chốt ca? Sau khi chốt sẽ không thể thêm/xoá giao dịch."
+                  className="mt-3 grid gap-3 sm:grid-cols-2"
+                >
+                  <input type="hidden" name="shiftId" value={shift.id} />
+                  <label className="field">
+                    <span>Giờ ra về *</span>
+                    <input name="checkOut" type="time" required defaultValue={defaultCheckOut} className="input" />
+                  </label>
+                  <label className="field">
+                    <span>Tiền mặt bàn giao *</span>
+                    <MoneyInput key={expectedCash} name="handoverCash" required defaultValue={expectedCash} />
+                  </label>
+                  <label className="field">
+                    <span>Ghi chú</span>
+                    <input name="closingNote" className="input" placeholder="VD: thiếu 20k do thối nhầm" />
+                  </label>
+                </ActionForm>
+              </div>
+            </FormDialog>
+          </div>
+        )}
       </div>
 
       <div className="grid grid-cols-2 gap-x-4 gap-y-1 rounded-lg bg-slate-50 p-3 text-sm sm:grid-cols-4">
@@ -66,27 +128,45 @@ export function ShiftCard({
         <Line label="Tiền mặt phải có" value={formatVND(expectedCash)} bold />
       </div>
 
-      {canEdit && (
-        <details open className="rounded-lg border border-slate-200 p-3">
-          <summary className="cursor-pointer font-semibold">+ Thêm giao dịch</summary>
-          <ActionForm
-            action={addTransaction}
-            submitLabel="Lưu giao dịch"
-            successMessage="Đã lưu giao dịch."
-            className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4"
-          >
-            <TransactionFields
-              shiftId={shift.id}
-              bankAccounts={bankAccounts}
-              saleSuggestions={saleSuggestions}
-              repairSuggestions={repairSuggestions}
-            />
-          </ActionForm>
-        </details>
-      )}
-
       {shift.transactions.length > 0 ? (
-        <div className="-mx-4 overflow-x-auto sm:mx-0">
+        <>
+        {/* Điện thoại: dạng danh sách */}
+        <ul className="divide-y divide-slate-100 rounded-lg border border-slate-200 sm:hidden">
+          {shift.transactions.map((t) => (
+            <li key={t.id} className="space-y-1.5 p-3">
+              <div className="flex items-start justify-between gap-3">
+                <p className="min-w-0 font-medium">{t.productName}</p>
+                <p className="shrink-0 font-semibold tabular-nums">{formatVND(t.price)}</p>
+              </div>
+              <div className="flex flex-wrap items-center gap-1.5 text-xs text-slate-500">
+                <span className="tabular-nums">{formatTimeVN(t.createdAt)}</span>
+                <KindBadge kind={t.kind} />
+                <PaymentBadge method={t.paymentMethod} />
+                {t.warrantyMonths > 0 && <span className="badge bg-slate-100 text-slate-700">BH {t.warrantyMonths} tháng</span>}
+              </div>
+              {t.paymentMethod === "TRANSFER" && t.bankAccount && (
+                <p className="text-xs text-slate-500">TK nhận: {t.bankAccount}</p>
+              )}
+              {(t.customerName || t.customerPhone) && (
+                <p className="text-sm text-slate-600">
+                  {t.customerName}
+                  {t.customerName && t.customerPhone && " · "}
+                  {t.customerPhone}
+                </p>
+              )}
+              {t.note && <p className="text-sm text-slate-500">{t.note}</p>}
+              {canDelete && (
+                <div className="text-right">
+                  <ConfirmButton action={deleteTransaction.bind(null, t.id)} message={`Xoá giao dịch "${t.productName}"?`}>
+                    Xoá
+                  </ConfirmButton>
+                </div>
+              )}
+            </li>
+          ))}
+        </ul>
+
+        <div className="hidden overflow-x-auto sm:block">
           <table className="table">
             <thead>
               <tr>
@@ -98,7 +178,7 @@ export function ShiftCard({
                 <th>Bảo hành</th>
                 <th>Khách hàng</th>
                 <th>Ghi chú</th>
-                {canEdit && <th></th>}
+                {canDelete && <th></th>}
               </tr>
             </thead>
             <tbody>
@@ -106,23 +186,13 @@ export function ShiftCard({
                 <tr key={t.id}>
                   <td className="text-slate-500 tabular-nums">{formatTimeVN(t.createdAt)}</td>
                   <td>
-                    <span
-                      className={`badge ${t.kind === "REPAIR" ? "bg-orange-100 text-orange-800" : "bg-blue-100 text-blue-800"}`}
-                    >
-                      {KIND_LABEL[t.kind]}
-                    </span>
+                    <KindBadge kind={t.kind} />
                   </td>
                   <td className="font-medium">{t.productName}</td>
                   <td className="text-right font-semibold whitespace-nowrap tabular-nums">{formatVND(t.price)}</td>
                   <td className="whitespace-nowrap">
-                    {t.paymentMethod === "TRANSFER" ? (
-                      <>
-                        <span className="badge bg-violet-100 text-violet-800">CK</span>
-                        <div className="text-xs text-slate-500">{t.bankAccount}</div>
-                      </>
-                    ) : (
-                      <span className="badge bg-emerald-100 text-emerald-800">TM</span>
-                    )}
+                    <PaymentBadge method={t.paymentMethod} />
+                    {t.paymentMethod === "TRANSFER" && <div className="text-xs text-slate-500">{t.bankAccount}</div>}
                   </td>
                   <td className="whitespace-nowrap">{t.warrantyMonths > 0 ? `${t.warrantyMonths} tháng` : "—"}</td>
                   <td>
@@ -130,7 +200,7 @@ export function ShiftCard({
                     {t.customerPhone && <div className="text-xs text-slate-500">{t.customerPhone}</div>}
                   </td>
                   <td className="text-slate-600">{t.note}</td>
-                  {canEdit && (
+                  {canDelete && (
                     <td>
                       <ConfirmButton
                         action={deleteTransaction.bind(null, t.id)}
@@ -145,6 +215,7 @@ export function ShiftCard({
             </tbody>
           </table>
         </div>
+        </>
       ) : (
         <p className="text-sm text-slate-500">Chưa có giao dịch nào.</p>
       )}
@@ -180,43 +251,7 @@ export function ShiftCard({
           </div>
           {shift.closingNote && <p className="mt-2 text-slate-600">Ghi chú: {shift.closingNote}</p>}
         </div>
-      ) : (
-        canEdit && (
-          <details className="rounded-lg border border-amber-200 bg-amber-50/40 p-3">
-            <summary className="cursor-pointer font-semibold">Kết thúc ca / Bàn giao</summary>
-            {checklistLeft > 0 && (
-              <p className="mt-2 rounded-md bg-amber-100 px-3 py-2 text-sm text-amber-800">
-                <TriangleAlert size={16} className="mr-1 inline align-text-bottom" aria-hidden />
-                Còn {checklistLeft} việc trong checklist hôm nay chưa hoàn thành.
-              </p>
-            )}
-            <p className="mt-2 text-sm text-slate-600">
-              Tiền mặt phải có = nhận đầu ca {formatVND(shift.openingCash)} + tiền mặt bán được {formatVND(sum.cash)} ={" "}
-              <b>{formatVND(expectedCash)}</b>
-            </p>
-            <ActionForm
-              action={closeShift}
-              submitLabel="Chốt ca"
-              confirmMessage="Chốt ca? Sau khi chốt sẽ không thể thêm/xoá giao dịch."
-              className="mt-3 grid gap-3 sm:grid-cols-3"
-            >
-              <input type="hidden" name="shiftId" value={shift.id} />
-              <label className="field">
-                <span>Giờ ra về *</span>
-                <input name="checkOut" type="time" required defaultValue={defaultCheckOut} className="input" />
-              </label>
-              <label className="field">
-                <span>Tiền mặt bàn giao *</span>
-                <MoneyInput key={expectedCash} name="handoverCash" required defaultValue={expectedCash} />
-              </label>
-              <label className="field">
-                <span>Ghi chú</span>
-                <input name="closingNote" className="input" placeholder="VD: thiếu 20k do thối nhầm" />
-              </label>
-            </ActionForm>
-          </details>
-        )
-      )}
+      ) : null}
     </section>
   );
 }
@@ -227,5 +262,21 @@ function Line({ label, value, bold }: { label: string; value: string; bold?: boo
       <p className="text-xs text-slate-500">{label}</p>
       <p className={`tabular-nums ${bold ? "font-bold" : "font-medium"}`}>{value}</p>
     </div>
+  );
+}
+
+function KindBadge({ kind }: { kind: string }) {
+  return (
+    <span className={`badge ${kind === "REPAIR" ? "bg-orange-100 text-orange-800" : "bg-blue-100 text-blue-800"}`}>
+      {KIND_LABEL[kind]}
+    </span>
+  );
+}
+
+function PaymentBadge({ method }: { method: string }) {
+  return method === "TRANSFER" ? (
+    <span className="badge bg-violet-100 text-violet-800">CK</span>
+  ) : (
+    <span className="badge bg-emerald-100 text-emerald-800">TM</span>
   );
 }

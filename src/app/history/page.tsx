@@ -133,16 +133,26 @@ export default async function HistoryPage({ searchParams }: { searchParams: Prom
               const handover = list.reduce((s, x) => s + (x.handoverCash ?? 0), 0);
               return (
                 <tr key={date}>
-                  <td className="whitespace-nowrap">
+                  <td data-title className="whitespace-nowrap">
                     <Link href={`/day/${date}`} className="font-medium text-blue-600 hover:underline">
                       {formatDateLong(date)}
                     </Link>
                   </td>
-                  <td>{list.map((s) => `${s.staffName} (${s.checkIn}–${s.checkOut ?? "…"})`).join(", ")}</td>
-                  <td className="text-right font-semibold tabular-nums">{formatVND(sum.total)}</td>
-                  <td className="text-right tabular-nums">{formatVND(sum.cash)}</td>
-                  <td className="text-right tabular-nums">{formatVND(sum.transfer)}</td>
-                  <td className="text-right tabular-nums">{formatVND(handover)}</td>
+                  <td data-label="Nhân viên">
+                    {list.map((s) => `${s.staffName} (${s.checkIn}–${s.checkOut ?? "…"})`).join(", ")}
+                  </td>
+                  <td data-label="Doanh thu" className="text-right font-semibold tabular-nums">
+                    {formatVND(sum.total)}
+                  </td>
+                  <td data-label="Tiền mặt" className="text-right tabular-nums">
+                    {formatVND(sum.cash)}
+                  </td>
+                  <td data-label="Chuyển khoản" className="text-right tabular-nums">
+                    {formatVND(sum.transfer)}
+                  </td>
+                  <td data-label="Bàn giao" className="text-right tabular-nums">
+                    {formatVND(handover)}
+                  </td>
                 </tr>
               );
             })}
