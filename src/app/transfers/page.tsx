@@ -37,7 +37,7 @@ export default async function TransfersPage({ searchParams }: { searchParams: Pr
           action={addStockTransfer}
           submitLabel="Lưu phiếu"
           successMessage="Đã lưu phiếu nhập hàng."
-          className="grid gap-3 sm:grid-cols-3 lg:grid-cols-6"
+          className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4"
         >
           <label className="field">
             <span>Ngày *</span>
@@ -63,7 +63,7 @@ export default async function TransfersPage({ searchParams }: { searchParams: Pr
               ))}
             </select>
           </label>
-          <label className="field sm:col-span-2">
+          <label className="field">
             <span>Sản phẩm *</span>
             <input name="productName" required className="input" placeholder="VD: Tai nghe ABC" />
           </label>
@@ -71,7 +71,7 @@ export default async function TransfersPage({ searchParams }: { searchParams: Pr
             <span>Số lượng *</span>
             <input name="quantity" type="number" min={1} defaultValue={1} required className="input" />
           </label>
-          <label className="field col-span-full">
+          <label className="field sm:col-span-2 lg:col-span-3">
             <span>Ghi chú</span>
             <input name="note" className="input" />
           </label>

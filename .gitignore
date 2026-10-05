@@ -6,3 +6,6 @@ next-env.d.ts
 .env
 prisma/*.db
 prisma/*.db-journal
+
+# Database local (npm run db:local)
+.local-db

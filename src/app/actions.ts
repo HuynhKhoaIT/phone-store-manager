@@ -2,7 +2,8 @@
 
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
-import { revalidatePath } from "next/cache";
+import { revalidatePath, revalidateTag } from "next/cache";
+import { TAGS } from "@/lib/cache";
 import { prisma } from "@/lib/db";
 import { BRANCH_COOKIE, getAllowedBranches, getCurrentBranch } from "@/lib/branch";
 import { isValidDate, todayVN } from "@/lib/format";
@@ -100,6 +101,8 @@ export async function setupFirstAdmin(fd: FormData): Promise<ActionResult> {
     prisma.branch.upsert({ where: { name: branchName }, update: {}, create: { name: branchName } }),
     prisma.user.create({ data: { name, username, passwordHash: hashPassword(password), role: "ADMIN" } }),
   ]);
+  revalidateTag(TAGS.users);
+  revalidateTag(TAGS.branches);
   await createSession(user.id);
   await setBranchCookie(branch.id);
   redirect("/");
@@ -146,6 +149,7 @@ export async function saveUser(fd: FormData): Promise<ActionResult> {
   if (id) await prisma.user.update({ where: { id }, data: { ...data, branches: { set: branches } } });
   else
     await prisma.user.create({ data: { ...data, passwordHash: hashPassword(password), branches: { connect: branches } } });
+  revalidateTag(TAGS.users);
   revalidatePath("/users");
   return {};
 }
@@ -168,6 +172,7 @@ export async function saveBranch(fd: FormData): Promise<ActionResult> {
 
   if (id) await prisma.branch.update({ where: { id }, data: { name, active } });
   else await prisma.branch.create({ data: { name } });
+  revalidateTag(TAGS.branches);
   revalidatePath("/", "layout");
   return {};
 }
@@ -368,6 +373,7 @@ export async function saveProduct(fd: FormData): Promise<ActionResult> {
   };
   if (id) await prisma.product.update({ where: { id }, data });
   else await prisma.product.create({ data });
+  revalidateTag(TAGS.prices);
   revalidatePath("/prices");
   return {};
 }
@@ -376,6 +382,7 @@ export async function deleteProduct(id: number): Promise<ActionResult> {
   const me = await getSessionUser();
   if (!me || !isAdmin(me)) return NO_PERMISSION;
   await prisma.product.delete({ where: { id } });
+  revalidateTag(TAGS.prices);
   revalidatePath("/prices");
   return {};
 }
@@ -396,6 +403,7 @@ export async function saveRepairPrice(fd: FormData): Promise<ActionResult> {
   const data = { service, device, price, warranty: optional(fd, "warranty"), note: optional(fd, "note") };
   if (id) await prisma.repairPrice.update({ where: { id }, data });
   else await prisma.repairPrice.create({ data });
+  revalidateTag(TAGS.prices);
   revalidatePath("/repair-prices");
   return {};
 }
@@ -404,6 +412,7 @@ export async function deleteRepairPrice(id: number): Promise<ActionResult> {
   const me = await getSessionUser();
   if (!me || !isAdmin(me)) return NO_PERMISSION;
   await prisma.repairPrice.delete({ where: { id } });
+  revalidateTag(TAGS.prices);
   revalidatePath("/repair-prices");
   return {};
 }

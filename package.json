@@ -7,7 +7,8 @@
     "build": "prisma generate && prisma db push --skip-generate && next build",
     "start": "next start",
     "db:push": "prisma db push",
-    "postinstall": "prisma generate"
+    "postinstall": "prisma generate",
+    "db:local": "node scripts/local-db.mjs"
   },
   "dependencies": {
     "@prisma/client": "6.19.3",
@@ -21,6 +22,7 @@
     "@types/node": "^22",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "embedded-postgres": "17.5.0-beta.15",
     "prisma": "6.19.3",
     "tailwindcss": "4.3.3",
     "typescript": "^5"

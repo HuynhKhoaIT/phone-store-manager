@@ -2,8 +2,10 @@ import "server-only";
 import { createHmac, randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
 import { cache } from "react";
 import { cookies } from "next/headers";
+import { unstable_cache } from "next/cache";
 import { redirect } from "next/navigation";
 import { prisma } from "./db";
+import { TAGS } from "./cache";
 
 export const SESSION_COOKIE = "session";
 const SESSION_DAYS = 30;
@@ -52,7 +54,18 @@ export async function destroySession() {
   (await cookies()).delete(SESSION_COOKIE);
 }
 
-/** Người dùng đang đăng nhập (hoặc null). Chỉ truy vấn DB một lần mỗi request. */
+/** Thông tin user theo id — cache giữa các request, xoá cache khi sửa tài khoản (tag users). */
+const findSessionUser = unstable_cache(
+  (id: number) =>
+    prisma.user.findUnique({
+      where: { id },
+      select: { id: true, name: true, username: true, role: true, active: true },
+    }),
+  ["session-user"],
+  { tags: [TAGS.users] },
+);
+
+/** Người dùng đang đăng nhập (hoặc null). */
 export const getSessionUser = cache(async (): Promise<SessionUser | null> => {
   const token = (await cookies()).get(SESSION_COOKIE)?.value;
   if (!token) return null;
@@ -62,7 +75,7 @@ export const getSessionUser = cache(async (): Promise<SessionUser | null> => {
   if (sig.length !== expected.length || !timingSafeEqual(Buffer.from(sig), Buffer.from(expected))) return null;
   if (Number(exp) < Date.now()) return null;
 
-  const user = await prisma.user.findUnique({ where: { id: Number(id) } });
+  const user = await findSessionUser(Number(id));
   if (!user || !user.active) return null;
   return { id: user.id, name: user.name, username: user.username, role: user.role as Role };
 });

@@ -14,7 +14,8 @@ Web app quản lý bán hàng cho cửa hàng điện thoại & phụ kiện nhi
 
 ```bash
 npm install          # postinstall tự chạy prisma generate
-npm run dev          # dev server (cần DATABASE_URL trong .env)
+npm run db:local     # bật Postgres local (Windows/Mac/Linux, không cần Docker) — giữ cửa sổ này mở
+npm run dev          # dev server ở cửa sổ khác (cần DATABASE_URL trong .env)
 npm run db:push      # đồng bộ schema Prisma vào DB
 npm run build        # prisma generate + prisma db push + next build (dùng trên Vercel)
 npx tsc --noEmit     # kiểm tra kiểu
@@ -48,7 +49,7 @@ Không có migration files: schema được đồng bộ bằng `prisma db push`
 | `/branches` | Admin | Thêm / đổi tên / ẩn chi nhánh |
 | `/account` | Tất cả | Đổi mật khẩu của mình |
 
-Menu: các trang admin nằm trong dropdown "Quản lý ▾" (`src/components/NavLinks.tsx`).
+Menu: sidebar dọc bên trái (`src/components/Sidebar.tsx`); trên điện thoại thu thành nút ☰. Nhóm "Quản lý" chỉ hiện với admin. Khi bấm menu có thanh tiến trình mỏng ở đầu trang.
 
 ## Nghiệp vụ quan trọng
 
@@ -90,6 +91,9 @@ src/lib/format.ts           # Tiền, ngày giờ VN, cộng ngày/tháng, warra
 src/lib/summary.ts          # summarize(): tổng / bán / sửa / TM / CK / theo tài khoản
 src/lib/prices.ts           # Nhãn loại máy, gợi ý giá khi nhập giao dịch
 src/lib/checklist.ts        # getDayChecklist()
+src/lib/cache.ts            # Tag cache (branches, users, prices)
+scripts/local-db.mjs        # Postgres local (embedded-postgres), dữ liệu trong .local-db/
+vercel.json                 # regions: sin1 (Singapore) — phải cùng vùng với database
 src/components/             # Client components dùng chung
 ```
 
@@ -105,6 +109,13 @@ src/components/             # Client components dùng chung
 - Bảng dài trên mobile: bọc `overflow-x-auto`; trang nhân viên hay xem trên điện thoại (như `/prices`) có thêm dạng thẻ `sm:hidden`.
 - Màu biểu đồ: `--series-sale` (xanh) và `--series-repair` (cam) trong `globals.css`.
 
+## Hiệu năng
+
+- **Server và DB phải cùng vùng.** `vercel.json` đặt function ở `sin1` (Singapore); database cũng phải ở Singapore. Lệch vùng (vd Mỹ ↔ Singapore) làm mỗi truy vấn tốn ~200 ms.
+- **Cache dữ liệu ít đổi** bằng `unstable_cache` với tag trong `src/lib/cache.ts`: user đăng nhập (`findSessionUser`), danh sách chi nhánh, chi nhánh được phân công, gợi ý bảng giá. Server action sửa dữ liệu nào thì **phải gọi `revalidateTag(TAGS.xxx)`** tương ứng, nếu không giao diện sẽ hiện dữ liệu cũ. Hàm cache trả về JSON nên chỉ `select` các trường không phải `Date`.
+- Hàm dùng nhiều lần trong một request (`getSessionUser`, `getAllowedBranches`, `getCurrentBranch`) bọc bằng `React.cache`.
+- **Không đặt `loading.tsx` ở `src/app/`** (Suspense ở root): đã gặp lỗi kết quả server action thỉnh thoảng không được cập nhật lên màn hình. Phản hồi khi chuyển trang dùng thanh tiến trình trong `Sidebar`.
+
 ## Deploy lên Vercel
 
 1. Đẩy repo lên GitHub → **Vercel → Add New Project** → import repo (Framework tự nhận Next.js).
@@ -115,5 +126,6 @@ src/components/             # Client components dùng chung
 
 ## Chạy / test ở máy local (Windows)
 
-- Cần một Postgres **UTF8** (Postgres mã hoá WIN1252 sẽ lỗi khi lưu tiếng Việt). `prisma dev` không hỗ trợ Windows. Có thể dùng Docker (`postgres:16-alpine`), DB Neon riêng để dev, hoặc package `embedded-postgres` với `initdbFlags: ["--encoding=UTF8", "--locale=C"]`.
+- Chạy `npm run db:local` (Postgres thật qua `embedded-postgres`, cổng 5433, đã ép **UTF8** — mặc định WIN1252 trên Windows sẽ lỗi khi lưu tiếng Việt). `.env`: `DATABASE_URL="postgresql://postgres:postgres@localhost:5433/phonestore"`, rồi `npm run db:push` lần đầu. Xoá thư mục `.local-db/` để làm lại DB từ đầu. (`prisma dev` không hỗ trợ Windows.)
+- Thư mục dự án nằm trong OneDrive: `next build` ở local đôi khi lỗi `Invariant: no direct app page entry found for /_not-found` do OneDrive khoá file trong `.next` — xoá `.next` rồi build lại. Vercel không bị.
 - Chưa có bộ test tự động trong repo. Các luồng chính đã được kiểm tra end-to-end bằng Playwright (thiết lập lần đầu, phân quyền, chi nhánh, vào ca, giao dịch, bảo hành, checklist, chốt ca, chấm công, dashboard, lịch sử).

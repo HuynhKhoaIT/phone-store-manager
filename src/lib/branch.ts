@@ -1,31 +1,49 @@
 import { cache } from "react";
 import { cookies } from "next/headers";
+import { unstable_cache } from "next/cache";
+import { TAGS } from "./cache";
 import { prisma } from "./db";
 import { getSessionUser, type SessionUser } from "./auth";
 
 export const BRANCH_COOKIE = "branchId";
 
+const BRANCH_FIELDS = { id: true, name: true, active: true } as const;
+
 /** Tất cả chi nhánh (kể cả đã ẩn) — dùng cho lịch sử, báo cáo. */
-export async function getBranches() {
-  return prisma.branch.findMany({ orderBy: { id: "asc" } });
-}
+export const getBranches = unstable_cache(
+  () => prisma.branch.findMany({ select: BRANCH_FIELDS, orderBy: { id: "asc" } }),
+  ["branches-all"],
+  { tags: [TAGS.branches] },
+);
 
-export async function getActiveBranches() {
-  return prisma.branch.findMany({ where: { active: true }, orderBy: { id: "asc" } });
-}
+export const getActiveBranches = unstable_cache(
+  () => prisma.branch.findMany({ where: { active: true }, select: BRANCH_FIELDS, orderBy: { id: "asc" } }),
+  ["branches-active"],
+  { tags: [TAGS.branches] },
+);
 
-/** Chi nhánh đang hoạt động mà người dùng được phép làm việc. Admin hoặc nhân viên chưa phân công = tất cả. */
-export async function getAllowedBranches(user: SessionUser) {
+/** Id các chi nhánh nhân viên được phân công (rỗng = mọi chi nhánh). */
+const getAssignedBranchIds = unstable_cache(
+  async (userId: number) =>
+    (await prisma.branch.findMany({ where: { staff: { some: { id: userId } } }, select: { id: true } })).map(
+      (b) => b.id,
+    ),
+  ["user-branch-ids"],
+  { tags: [TAGS.users, TAGS.branches] },
+);
+
+/**
+ * Chi nhánh đang hoạt động mà người dùng được phép làm việc. Admin hoặc nhân viên chưa phân công = tất cả.
+ * Được cache theo request (layout và getCurrentBranch dùng chung) và chạy song song để giảm số lần gọi DB.
+ */
+export const getAllowedBranches = cache(async (user: SessionUser) => {
   if (user.role === "ADMIN") return getActiveBranches();
-  const assigned = await prisma.branch.findMany({
-    where: { active: true, staff: { some: { id: user.id } } },
-    orderBy: { id: "asc" },
-  });
-  if (assigned.length > 0) return assigned;
-  const hasAnyAssignment = await prisma.branch.count({ where: { staff: { some: { id: user.id } } } });
-  // Được phân công nhưng các chi nhánh đó đều đã ẩn → không còn chi nhánh nào
-  return hasAnyAssignment ? [] : getActiveBranches();
-}
+  const [active, assigned] = await Promise.all([getActiveBranches(), getAssignedBranchIds(user.id)]);
+  if (assigned.length === 0) return active;
+  // Được phân công nhưng các chi nhánh đó đều đã ẩn → danh sách rỗng
+  const ids = new Set(assigned);
+  return active.filter((b) => ids.has(b.id));
+});
 
 /**
  * Chi nhánh làm việc của phiên hiện tại (chọn lúc đăng nhập, lưu trong cookie).

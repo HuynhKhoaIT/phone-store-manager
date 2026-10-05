@@ -43,3 +43,24 @@ body {
     @apply inline-block rounded px-1.5 py-0.5 text-xs font-medium whitespace-nowrap;
   }
 }
+
+/* Thanh tiến trình khi chuyển trang (Sidebar) */
+.nav-progress {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 60;
+  height: 3px;
+  width: 100%;
+  background: #3b82f6;
+  transform-origin: left;
+  animation: nav-progress 8s cubic-bezier(0.1, 0.7, 0.2, 1) forwards;
+}
+@keyframes nav-progress {
+  from {
+    transform: scaleX(0);
+  }
+  to {
+    transform: scaleX(0.95);
+  }
+}

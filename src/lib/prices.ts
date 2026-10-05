@@ -1,4 +1,6 @@
+import { unstable_cache } from "next/cache";
 import { prisma } from "./db";
+import { TAGS } from "./cache";
 import type { PriceSuggestion } from "@/components/TransactionFields";
 
 export const CATEGORY_LABEL: Record<string, string> = {
@@ -13,8 +15,12 @@ export function productLabel(p: { name: string; variant: string | null; conditio
   return [p.name, p.variant, p.condition === "USED" ? "(Cũ)" : null].filter(Boolean).join(" ");
 }
 
-/** Gợi ý tên + giá khi nhập giao dịch, lấy từ bảng giá. */
-export async function getPriceSuggestions() {
+/** Gợi ý tên + giá khi nhập giao dịch, lấy từ bảng giá (cache, xoá khi sửa bảng giá). */
+export const getPriceSuggestions = unstable_cache(loadPriceSuggestions, ["price-suggestions"], {
+  tags: [TAGS.prices],
+});
+
+async function loadPriceSuggestions() {
   const [products, repairs] = await Promise.all([
     prisma.product.findMany({ where: { active: true }, orderBy: { name: "asc" } }),
     prisma.repairPrice.findMany({ orderBy: [{ device: "asc" }, { service: "asc" }] }),
