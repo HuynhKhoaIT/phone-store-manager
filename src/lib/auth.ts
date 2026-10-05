@@ -5,7 +5,7 @@ import { cookies } from "next/headers";
 import { unstable_cache } from "next/cache";
 import { redirect } from "next/navigation";
 import { prisma } from "./db";
-import { TAGS } from "./cache";
+import { CACHE_SECONDS, TAGS } from "./cache";
 
 export const SESSION_COOKIE = "session";
 const SESSION_DAYS = 30;
@@ -62,7 +62,7 @@ const findSessionUser = unstable_cache(
       select: { id: true, name: true, username: true, role: true, active: true },
     }),
   ["session-user"],
-  { tags: [TAGS.users] },
+  { tags: [TAGS.users], revalidate: CACHE_SECONDS },
 );
 
 /** Người dùng đang đăng nhập (hoặc null). */

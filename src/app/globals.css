@@ -156,3 +156,67 @@ body {
     transform: translateY(-8px);
   }
 }
+
+/* Nội dung bài viết (xem trước Markdown) */
+.post-content {
+  line-height: 1.75;
+  color: #1f2937;
+}
+.post-content > * + * {
+  margin-top: 0.9em;
+}
+.post-content h1,
+.post-content h2,
+.post-content h3 {
+  margin-top: 1.4em;
+  font-weight: 600;
+  line-height: 1.3;
+  color: #0f172a;
+}
+.post-content h1 {
+  font-size: 1.6rem;
+}
+.post-content h2 {
+  font-size: 1.3rem;
+}
+.post-content h3 {
+  font-size: 1.1rem;
+}
+.post-content a {
+  color: #1677ff;
+  text-decoration: underline;
+}
+.post-content ul,
+.post-content ol {
+  padding-left: 1.5em;
+}
+.post-content ul {
+  list-style: disc;
+}
+.post-content ol {
+  list-style: decimal;
+}
+.post-content blockquote {
+  border-left: 3px solid #cbd5e1;
+  padding-left: 1em;
+  color: #475569;
+}
+.post-content img {
+  max-width: 100%;
+  border-radius: 8px;
+}
+.post-content code {
+  border-radius: 4px;
+  background: #f1f5f9;
+  padding: 0.1em 0.35em;
+  font-size: 0.9em;
+}
+.post-content table {
+  width: 100%;
+  border-collapse: collapse;
+}
+.post-content th,
+.post-content td {
+  border: 1px solid #e2e8f0;
+  padding: 0.4em 0.6em;
+}

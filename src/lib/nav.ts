@@ -1,14 +1,15 @@
 import {
+  Boxes,
   CalendarDays,
   Clock,
   House,
   LayoutDashboard,
   ListChecks,
-  Package,
+  Newspaper,
   Receipt,
   ShieldCheck,
-  Smartphone,
   Store,
+  Tags,
   Users,
   Wrench,
   type LucideIcon,
@@ -34,18 +35,19 @@ export const HOME_ITEM = {
 
 export const STAFF_LINKS: NavItem[] = [
   { href: "/day", match: "/day", label: "Bán hàng", description: "Vào ca, nhập giao dịch, chốt ca", icon: Receipt, tone: "bg-blue-500" },
-  { href: "/prices", match: "/prices", label: "Bảng giá", description: "Giá máy & phụ kiện", icon: Smartphone, tone: "bg-indigo-500" },
+  { href: "/products", match: "/products", label: "Hàng hoá", description: "Bảng giá, nhập / chuyển hàng", icon: Boxes, tone: "bg-indigo-500" },
   { href: "/repair-prices", match: "/repair-prices", label: "Giá sửa chữa", description: "Thay pin, thay màn...", icon: Wrench, tone: "bg-orange-500" },
   { href: "/warranty", match: "/warranty", label: "Bảo hành", description: "Tra cứu theo SĐT", icon: ShieldCheck, tone: "bg-emerald-500" },
-  { href: "/transfers", match: "/transfers", label: "Nhập hàng", description: "Chuyển hàng giữa chi nhánh", icon: Package, tone: "bg-amber-500" },
   { href: "/timesheet", match: "/timesheet", label: "Chấm công", description: "Ngày công, giờ làm", icon: Clock, tone: "bg-cyan-600" },
 ];
 
 export const ADMIN_LINKS: NavItem[] = [
   { href: "/dashboard", match: "/dashboard", label: "Dashboard", description: "Doanh thu tháng", icon: LayoutDashboard, tone: "bg-violet-500" },
   { href: "/history", match: "/history", label: "Lịch sử", description: "Xem lại từng ngày", icon: CalendarDays, tone: "bg-sky-600" },
+  { href: "/posts", match: "/posts", label: "Tin tức", description: "Bài viết cho web bán hàng", icon: Newspaper, tone: "bg-rose-500" },
   { href: "/checklist", match: "/checklist", label: "Checklist", description: "Việc cần làm hằng ngày", icon: ListChecks, tone: "bg-green-600" },
   { href: "/users", match: "/users", label: "Nhân viên", description: "Tài khoản, phân quyền", icon: Users, tone: "bg-pink-500" },
+  { href: "/brands", match: "/brands", label: "Thương hiệu", description: "Danh mục thương hiệu", icon: Tags, tone: "bg-teal-600" },
   { href: "/branches", match: "/branches", label: "Chi nhánh", description: "Thêm, sửa chi nhánh", icon: Store, tone: "bg-slate-600" },
 ];
 

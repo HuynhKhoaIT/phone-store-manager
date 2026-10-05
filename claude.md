@@ -17,6 +17,7 @@ npm install          # postinstall tự chạy prisma generate
 npm run db:local     # bật Postgres local (Windows/Mac/Linux, không cần Docker) — giữ cửa sổ này mở
 npm run dev          # dev server ở cửa sổ khác (cần DATABASE_URL trong .env)
 npm run db:push      # đồng bộ schema Prisma vào DB
+npm run db:seed      # thêm dữ liệu mẫu (chỉ chạy với DB localhost; phần nào đã có dữ liệu thì bỏ qua)
 npm run build        # prisma generate + prisma db push + next build (dùng trên Vercel)
 npx tsc --noEmit     # kiểm tra kiểu
 ```
@@ -27,6 +28,7 @@ Biến môi trường (xem `.env.example`):
 |---|---|
 | `DATABASE_URL` | Chuỗi kết nối Postgres |
 | `AUTH_SECRET` | Chuỗi ngẫu nhiên dài để ký cookie đăng nhập. **Bắt buộc ở production**, thiếu thì app báo lỗi |
+| `PUBLIC_API_ORIGINS` | (Tuỳ chọn) domain được gọi `/api/public`, cách nhau dấu phẩy. Không đặt = mọi domain |
 
 Không có migration files: schema được đồng bộ bằng `prisma db push` trong lúc build. `db push` sẽ **dừng build** nếu thay đổi làm mất dữ liệu (xoá cột, đổi kiểu…) — khi đó cần tự xử lý dữ liệu trước, đừng thêm `--accept-data-loss` một cách tuỳ tiện.
 
@@ -38,10 +40,13 @@ Không có migration files: schema được đồng bộ bằng `prisma db push`
 | `/choose-branch` | Tất cả | Đổi chi nhánh làm việc trong phiên |
 | `/` | Tất cả | Trang chủ: lời chào, chi nhánh đang làm, danh sách chức năng dạng ô (kiểu app) |
 | `/day/[date]` (`/day` chuyển về hôm nay) | Tất cả | Trang chính: checklist trong ngày, vào ca (giờ đi làm + tiền nhận đầu ca), nhập giao dịch, chốt ca (giờ ra về + tiền bàn giao, hiện chênh lệch) |
-| `/prices` | Xem: tất cả · Sửa: admin | Bảng giá máy iPhone / Android / Phụ kiện, mới hoặc cũ 99%, kèm bảo hành mặc định |
+| `/products` (Hàng hoá, `/prices` cũ tự chuyển về) | Xem: tất cả · Sửa: admin | Tab **Danh sách hàng hoá**: thống kê (đang bán, đã bán tháng này, giá trị hàng; admin thấy giá trị theo giá nhập + lãi dự kiến) và bảng giá iPhone / Android / Phụ kiện: thương hiệu, RAM/bộ nhớ (điện thoại), mã sản phẩm (IMEI hoặc mã vạch), pin % (iPhone), mới/cũ, bảo hành mặc định, trạng thái Đang bán / Đã bán (tại chi nhánh nào) / Ngừng bán. Admin thấy giá nhập + lãi |
+| `/posts`, `/posts/new`, `/posts/[id]` | Admin | **Tin tức** cho web: danh sách (Đã đăng / Hẹn giờ / Nháp, chuyên mục, tìm kiếm), trang soạn bài riêng (Markdown + Xem trước, chuyên mục Tin tức / Khuyến mãi / Mẹo hay, ảnh bìa, tóm tắt, ngày đăng — tương lai = hẹn giờ, nổi bật) |
+| `/api/public/*` | Công khai (không đăng nhập) | API chỉ đọc cho web bán hàng (repo FE riêng `phone-store-shop`): `products`, `products/:slug`, `filters`, `branches`, `repair-prices`, `posts`, `posts/:slug`. Tài liệu: **`docs/public-api.md`**. **Không đổi tên trường / shape** — FE đang dùng |
+| `/brands` | Admin | Danh mục thương hiệu để chọn khi nhập phụ kiện / Android |
 | `/repair-prices` | Xem: tất cả · Sửa: admin | Bảng giá sửa chữa theo dịch vụ (thay pin, thay màn…) × dòng máy |
 | `/warranty` | Tất cả | Tra cứu bảo hành theo SĐT / tên khách / tên sản phẩm |
-| `/transfers` | Tất cả (xoá: admin) | Phiếu chuyển hàng giữa chi nhánh, vd "5 tai nghe ABC từ CN1 → CN2" |
+| `/products/receipts` (`/transfers` cũ tự chuyển về) | Tất cả (xoá: admin) | Tab **Phiếu nhập / chuyển**: phiếu *Nhập từ NCC* (nhà cung cấp, chi nhánh nhận; admin nhập giá nhập/cái → tự cập nhật `Product.costPrice`) và phiếu *Chuyển chi nhánh*. Sản phẩm chọn từ danh sách hàng hoá (`ProductPicker`), chưa có trong danh sách thì lưu theo tên gõ. **Chưa theo dõi tồn kho số lượng** |
 | `/timesheet` | Tất cả (admin xem được của người khác) | Chấm công theo tháng: ngày, chi nhánh, giờ vào/ra, tổng giờ |
 | `/dashboard` | Admin | Doanh thu tháng, so với tháng trước, biểu đồ theo ngày, TM/CK, theo chi nhánh/nhân viên, top sản phẩm |
 | `/history` | Admin | Lịch tháng của chi nhánh hiện tại, đánh dấu ngày lệch tiền / ca chưa chốt |
@@ -69,6 +74,21 @@ Giao diện (`src/components/AppShell.tsx`, danh sách menu dùng chung ở `src
 - `warrantyMonths` 0–12. **> 0 thì bắt buộc tên + SĐT khách** (để tra cứu bảo hành). SĐT được lưu đã bỏ khoảng trắng/dấu chấm/gạch.
 - Ngày hết bảo hành = ngày của ca + số tháng (`warrantyEnd` trong `lib/format.ts`, xử lý cuối tháng).
 - Khi nhập, gõ tên sẽ gợi ý từ bảng giá; chọn đúng gợi ý thì tự điền giá + bảo hành (`TransactionFields.tsx`).
+
+**Sản phẩm trong bảng giá (`Product`)**
+- Trạng thái suy ra từ `active` + `soldBranchId` (`productStatus()` trong `src/lib/product-labels.ts`): Đang bán / Đã bán / Ngừng bán.
+- `code`: IMEI (điện thoại) hoặc mã vạch / mã riêng (phụ kiện), không trùng nhau. **Điện thoại có mã = một máy cụ thể** (`isSingleUnit`): bán qua giao dịch (chọn đúng gợi ý) thì tự đánh dấu Đã bán tại chi nhánh của ca và biến khỏi gợi ý; admin xoá giao dịch thì máy trở lại Đang bán. Phụ kiện có mã không tự đánh dấu.
+- `costPrice` (giá nhập) **chỉ admin thấy**; không được đưa vào dữ liệu gửi xuống client của nhân viên (gợi ý giá không chứa giá nhập). Khi bán, giá nhập được chụp vào `Transaction.costPrice` → Dashboard tính **Lợi nhuận** trên các giao dịch có giá nhập.
+- `ramGb` / `storageGb` (điện thoại, chọn từ `RAM_OPTIONS` / `STORAGE_OPTIONS`), `batteryHealth` (chỉ iPhone, 1–100). Tên khi bán = `productLabel()`, vd "iPhone 13 Pro Max 6/128GB Xanh (Cũ) - Mã 3567…" → tra bảo hành theo IMEI được.
+
+**Web marketing / API công khai** (`src/lib/public-api.ts`, `src/app/api/public/**`)
+- Chỉ sản phẩm `showOnWeb = true` và `active` mới ra API; máy đã bán chỉ hiện khi `includeSold=1` hoặc mở theo slug.
+- `toPublic()` là **chỗ duy nhất** quyết định trường nào được công khai — không trả `costPrice`, `note`, `code` đầy đủ, `soldBranch`. Thêm trường mới vào API thì sửa ở đây, và cân nhắc có nhạy cảm không.
+- `slug` không đặt `@unique` ở DB (để `prisma db push` lúc build Vercel không dừng vì cảnh báo); `saveProduct` tự đảm bảo không trùng (thêm `-2`, `-3`...).
+- Cache bằng tag `prices` → mọi action sửa sản phẩm / thương hiệu / bán máy phải `revalidateTag(TAGS.prices)`.
+- CORS: env `PUBLIC_API_ORIGINS` (không đặt = `*`). Middleware bỏ qua `/api/public`.
+- Repo FE riêng `phone-store-shop` **chỉ gọi API** (env `ADMIN_API_URL`), không đọc DB. Đổi tên trường `PublicProduct` hoặc shape `{ items: [...] }` của `branches` / `repair-prices` thì phải báo bên đó. FE không có đặt hàng / thanh toán (chỉ nút liên hệ Zalo / gọi).
+- Tin tức: nội dung lưu Markdown, chuyển HTML bằng `src/lib/markdown.ts` (marked) — **chặn HTML viết tay và link không an toàn** vì FE chèn `contentHtml` trực tiếp. Bài hẹn giờ: cache chứa mọi bài PUBLISHED, lọc `publishedAt <= now` lúc gọi API nên tự hiện đúng giờ. Cache tag `posts`.
 
 **Chi nhánh**
 - Chi nhánh làm việc của phiên lưu trong cookie `branchId`, được chọn lúc đăng nhập. **Mọi ca/giao dịch/checklist ghi vào chi nhánh này** — server luôn lấy qua `getCurrentBranch()`, không tin `branchId` gửi từ form.
@@ -140,6 +160,7 @@ src/components/             # Client components dùng chung
 
 ## Chạy / test ở máy local (Windows)
 
+- **Dữ liệu mẫu:** `npm run db:seed` (`scripts/seed-demo.mjs`) — giữ nguyên dữ liệu đã có, chỉ thêm vào bảng còn trống: chi nhánh thứ 2, nhân viên `lan` / `nam` (mật khẩu `123456`), thương hiệu, ~22 sản phẩm (không có ảnh — để web hiện ảnh mặc định), giá sửa chữa, checklist, ca + giao dịch 30 ngày (hôm nay có ca đang mở), phiếu nhập/chuyển, 6 bài viết. Script từ chối chạy nếu `DATABASE_URL` không phải localhost. Seed ghi thẳng DB nên cache của server dev đang chạy có thể cũ tới 5 phút (`CACHE_SECONDS`) — khởi động lại `npm run dev` để thấy ngay.
 - Chạy `npm run db:local` (Postgres thật qua `embedded-postgres`, cổng 5433, đã ép **UTF8** — mặc định WIN1252 trên Windows sẽ lỗi khi lưu tiếng Việt). `.env`: `DATABASE_URL="postgresql://postgres:postgres@localhost:5433/phonestore"`, rồi `npm run db:push` lần đầu. Xoá thư mục `.local-db/` để làm lại DB từ đầu. (`prisma dev` không hỗ trợ Windows.)
 - Thư mục dự án nằm trong OneDrive: `next build` ở local đôi khi lỗi `Invariant: no direct app page entry found for /_not-found` do OneDrive khoá file trong `.next` — xoá `.next` rồi build lại. Vercel không bị.
 - Chưa có bộ test tự động trong repo. Các luồng chính đã được kiểm tra end-to-end bằng Playwright (thiết lập lần đầu, phân quyền, chi nhánh, vào ca, giao dịch, bảo hành, checklist, chốt ca, chấm công, dashboard, lịch sử).

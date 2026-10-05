@@ -7,6 +7,8 @@ import { TAGS } from "@/lib/cache";
 import { prisma } from "@/lib/db";
 import { BRANCH_COOKIE, getAllowedBranches, getCurrentBranch } from "@/lib/branch";
 import { isValidDate, todayVN } from "@/lib/format";
+import { slugify } from "@/lib/slug";
+import { RAM_OPTIONS, STORAGE_OPTIONS, isSingleUnit, productLabel } from "@/lib/product-labels";
 import {
   createSession,
   destroySession,
@@ -250,20 +252,42 @@ export async function addTransaction(fd: FormData): Promise<ActionResult> {
     return { error: "Có bảo hành thì bắt buộc nhập tên và số điện thoại khách hàng." };
   if (customerPhone && !PHONE_RE.test(customerPhone)) return { error: "Số điện thoại không hợp lệ." };
 
-  await prisma.transaction.create({
-    data: {
-      shiftId: found.shift.id,
-      kind,
-      productName,
-      price,
-      paymentMethod,
-      bankAccount,
-      warrantyMonths,
-      customerName,
-      customerPhone: customerPhone?.replace(/[ .-]/g, "") ?? null,
-      note: optional(fd, "note"),
-    },
-  });
+  // Bán sản phẩm chọn từ bảng giá: lưu giá nhập để tính lợi nhuận; điện thoại có mã thì đánh dấu đã bán
+  const productId = kind === "SALE" ? Number(str(fd, "productId")) || null : null;
+  const product = productId ? await prisma.product.findUnique({ where: { id: productId } }) : null;
+  const markSold = !!product && isSingleUnit(product);
+  if (markSold && product.soldBranchId != null) return { error: "Máy này đã được bán trước đó." };
+
+  await prisma.$transaction([
+    prisma.transaction.create({
+      data: {
+        shiftId: found.shift.id,
+        kind,
+        productId: product?.id ?? null,
+        costPrice: product?.costPrice ?? null,
+        productName,
+        price,
+        paymentMethod,
+        bankAccount,
+        warrantyMonths,
+        customerName,
+        customerPhone: customerPhone?.replace(/[ .-]/g, "") ?? null,
+        note: optional(fd, "note"),
+      },
+    }),
+    ...(markSold
+      ? [
+          prisma.product.update({
+            where: { id: product.id },
+            data: { soldBranchId: found.shift.branchId, soldAt: new Date() },
+          }),
+        ]
+      : []),
+  ]);
+  if (markSold) {
+    revalidateTag(TAGS.prices);
+    revalidatePath("/products");
+  }
   revalidatePath(`/day/${found.shift.date}`);
   return {};
 }
@@ -277,7 +301,18 @@ export async function deleteTransaction(id: number): Promise<ActionResult> {
   if (!tx) return { error: "Không tìm thấy giao dịch." };
   const found = await getEditableShift(me, tx.shiftId);
   if ("error" in found) return { error: found.error };
-  await prisma.transaction.delete({ where: { id } });
+  const product = tx.productId ? await prisma.product.findUnique({ where: { id: tx.productId } }) : null;
+  await prisma.$transaction([
+    prisma.transaction.delete({ where: { id } }),
+    // Xoá giao dịch bán máy có mã → máy trở lại "đang bán"
+    ...(product && isSingleUnit(product) && product.soldBranchId != null
+      ? [prisma.product.update({ where: { id: product.id }, data: { soldBranchId: null, soldAt: null } })]
+      : []),
+  ]);
+  if (product && isSingleUnit(product)) {
+    revalidateTag(TAGS.prices);
+    revalidatePath("/products");
+  }
   revalidatePath(`/day/${found.shift.date}`);
   return {};
 }
@@ -318,22 +353,55 @@ export async function addStockTransfer(fd: FormData): Promise<ActionResult> {
   const me = await getSessionUser();
   if (!me) return NOT_LOGGED_IN;
 
+  const type = str(fd, "type") === "IMPORT" ? "IMPORT" : "TRANSFER";
   const date = str(fd, "date");
-  const productName = str(fd, "productName");
   const quantity = Number(str(fd, "quantity"));
-  const fromBranchId = Number(str(fd, "fromBranchId"));
   const toBranchId = Number(str(fd, "toBranchId"));
+  const fromBranchId = type === "TRANSFER" ? Number(str(fd, "fromBranchId")) : null;
+  // Giá nhập chỉ admin nhập/xem
+  const unitCostRaw = isAdmin(me) && type === "IMPORT" ? str(fd, "unitCost") : "";
+  const unitCost = unitCostRaw ? money(fd, "unitCost") : null;
+
+  // Sản phẩm chọn từ danh sách hàng hoá (hoặc tên gõ tự do nếu chưa có trong danh sách)
+  const productId = Number(str(fd, "productId")) || null;
+  const product = productId ? await prisma.product.findUnique({ where: { id: productId } }) : null;
+  const productName = product ? productLabel(product) : str(fd, "productName");
 
   if (!isValidDate(date)) return { error: "Ngày không hợp lệ." };
   if (!isAdmin(me) && date > todayVN()) return { error: "Không thể ghi phiếu cho ngày trong tương lai." };
-  if (!productName) return { error: "Vui lòng nhập tên sản phẩm." };
+  if (!productName) return { error: "Vui lòng chọn sản phẩm." };
   if (!Number.isInteger(quantity) || quantity <= 0) return { error: "Số lượng phải lớn hơn 0." };
-  if (fromBranchId === toBranchId) return { error: "Chi nhánh gửi và nhận phải khác nhau." };
+  if (!toBranchId) return { error: "Vui lòng chọn chi nhánh nhận hàng." };
+  if (type === "TRANSFER" && (!fromBranchId || fromBranchId === toBranchId))
+    return { error: "Chi nhánh gửi và nhận phải khác nhau." };
+  if (unitCost != null && (!Number.isFinite(unitCost) || unitCost < 0)) return { error: "Giá nhập không hợp lệ." };
 
-  await prisma.stockTransfer.create({
-    data: { date, productName, quantity, fromBranchId, toBranchId, staffName: me.name, note: optional(fd, "note") },
-  });
-  revalidatePath("/transfers");
+  await prisma.$transaction([
+    prisma.stockTransfer.create({
+      data: {
+        type,
+        date,
+        productId: product?.id ?? null,
+        productName,
+        quantity,
+        fromBranchId,
+        toBranchId,
+        supplier: type === "IMPORT" ? optional(fd, "supplier") : null,
+        unitCost,
+        staffName: me.name,
+        note: optional(fd, "note"),
+      },
+    }),
+    // Phiếu nhập có giá nhập → cập nhật giá nhập mới nhất cho sản phẩm
+    ...(product && unitCost != null
+      ? [prisma.product.update({ where: { id: product.id }, data: { costPrice: unitCost } })]
+      : []),
+  ]);
+  if (product && unitCost != null) {
+    revalidateTag(TAGS.prices);
+    revalidatePath("/products");
+  }
+  revalidatePath("/products/receipts");
   return {};
 }
 
@@ -341,7 +409,7 @@ export async function deleteStockTransfer(id: number): Promise<ActionResult> {
   const me = await getSessionUser();
   if (!me || !isAdmin(me)) return NO_PERMISSION;
   await prisma.stockTransfer.delete({ where: { id } });
-  revalidatePath("/transfers");
+  revalidatePath("/products/receipts");
   return {};
 }
 
@@ -359,25 +427,100 @@ export async function saveProduct(fd: FormData): Promise<ActionResult> {
   const price = money(fd, "price");
   const warrantyMonths = warranty(fd);
 
+  const costRaw = str(fd, "costPrice");
+  const costPrice = costRaw ? money(fd, "costPrice") : null;
+  const isIphone = category === "IPHONE";
+  const code = str(fd, "code").replace(/\s/g, "") || null;
+  // RAM / bộ nhớ chỉ cho điện thoại
+  const isPhone = category !== "ACCESSORY";
+  const ramGb = isPhone ? Number(str(fd, "ramGb")) || null : null;
+  const storageGb = isPhone ? Number(str(fd, "storageGb")) || null : null;
+  const batteryRaw = isIphone ? str(fd, "batteryHealth") : "";
+  const batteryHealth = batteryRaw ? Number(batteryRaw) : null;
+  const status = str(fd, "status");
+  // Thương hiệu chỉ dùng cho Android / phụ kiện (iPhone mặc định Apple)
+  const brandId = category !== "IPHONE" ? Number(str(fd, "brandId")) || null : null;
+  const soldBranchId = status === "SOLD" ? Number(str(fd, "soldBranchId")) || null : null;
+
   if (!CATEGORIES.includes(category)) return { error: "Vui lòng chọn loại sản phẩm." };
   if (!name) return { error: "Vui lòng nhập tên sản phẩm." };
   if (!Number.isFinite(price) || price <= 0) return { error: "Vui lòng nhập giá bán." };
+  if (costPrice != null && (!Number.isFinite(costPrice) || costPrice < 0)) return { error: "Giá nhập không hợp lệ." };
   if (Number.isNaN(warrantyMonths)) return { error: "Bảo hành phải từ 0 đến 12 tháng." };
+  if (code && !/^[A-Za-z0-9._\-\/]{1,40}$/.test(code))
+    return { error: "Mã sản phẩm tối đa 40 ký tự, chỉ gồm chữ, số và . _ - /" };
+  if (batteryHealth != null && (!Number.isInteger(batteryHealth) || batteryHealth < 1 || batteryHealth > 100))
+    return { error: "Tình trạng pin phải từ 1 đến 100%." };
+  if (status === "SOLD" && !soldBranchId) return { error: "Đã bán thì phải chọn chi nhánh đã bán." };
+  if (ramGb != null && !RAM_OPTIONS.includes(ramGb)) return { error: "RAM không hợp lệ." };
+  if (storageGb != null && !STORAGE_OPTIONS.includes(storageGb)) return { error: "Bộ nhớ không hợp lệ." };
+  if (code) {
+    const dup = await prisma.product.findFirst({ where: { code, ...(id && { id: { not: id } }) } });
+    if (dup) return { error: `Mã này đã có trong bảng giá (${dup.name}).` };
+  }
 
+  // Hiển thị trên web marketing
+  const showOnWeb = str(fd, "showOnWeb") === "on";
+  const salePriceRaw = showOnWeb ? str(fd, "salePrice") : "";
+  const salePrice = salePriceRaw ? money(fd, "salePrice") : null;
+  const imageUrls = str(fd, "imageUrls")
+    .split(/\r?\n/)
+    .map((u) => u.trim())
+    .filter(Boolean);
+  if (salePrice != null && (!Number.isFinite(salePrice) || salePrice <= 0 || salePrice >= price))
+    return { error: "Giá khuyến mãi phải lớn hơn 0 và nhỏ hơn giá bán." };
+  if (imageUrls.length > 10) return { error: "Tối đa 10 ảnh." };
+  if (imageUrls.some((u) => !/^https?:\/\/\S+$/i.test(u) || u.length > 500))
+    return { error: "Link ảnh phải bắt đầu bằng http:// hoặc https://" };
+  const sortOrder = Number(str(fd, "sortOrder") || 0);
+  if (!Number.isInteger(sortOrder)) return { error: "Thứ tự hiển thị phải là số nguyên." };
+
+  const existing = id ? await prisma.product.findUnique({ where: { id } }) : null;
+
+  // Slug: nhập tay hoặc tự tạo từ tên; giữ slug cũ nếu không đổi; thêm -2, -3... nếu trùng
+  const slugInput = slugify(str(fd, "slug"));
+  let slug: string | null = slugInput || existing?.slug || null;
+  if (!slug && showOnWeb) {
+    slug = slugify([name, ramGb && storageGb ? `${ramGb}-${storageGb}gb` : storageGb ? `${storageGb}gb` : null,
+      optional(fd, "variant"), str(fd, "condition") === "USED" ? "cu" : null].filter(Boolean).join(" ")) || "san-pham";
+  }
+  if (slug) {
+    const base = slug;
+    for (let n = 2; await prisma.product.findFirst({ where: { slug, ...(id && { id: { not: id } }) } }); n++) {
+      if (slugInput && n === 2) return { error: `Đường dẫn "${slugInput}" đã được dùng cho sản phẩm khác.` };
+      slug = `${base}-${n}`;
+    }
+  }
   const data = {
     category,
     name,
     price,
+    costPrice,
+    brandId,
     warrantyMonths,
+    code,
+    ramGb,
+    storageGb,
+    batteryHealth,
     variant: optional(fd, "variant"),
     condition: str(fd, "condition") === "USED" ? "USED" : "NEW",
     note: optional(fd, "note"),
-    active: str(fd, "active") !== "false",
+    active: status !== "HIDDEN",
+    showOnWeb,
+    slug,
+    description: showOnWeb ? optional(fd, "description") : (existing?.description ?? null),
+    salePrice,
+    featured: showOnWeb && str(fd, "featured") === "on",
+    sortOrder,
+    imageUrls: showOnWeb ? imageUrls : (existing?.imageUrls ?? []),
+    soldBranchId,
+    // Giữ thời điểm bán cũ nếu vẫn là "đã bán"
+    soldAt: soldBranchId ? (existing?.soldAt ?? new Date()) : null,
   };
   if (id) await prisma.product.update({ where: { id }, data });
   else await prisma.product.create({ data });
   revalidateTag(TAGS.prices);
-  revalidatePath("/prices");
+  revalidatePath("/products");
   return {};
 }
 
@@ -386,7 +529,7 @@ export async function deleteProduct(id: number): Promise<ActionResult> {
   if (!me || !isAdmin(me)) return NO_PERMISSION;
   await prisma.product.delete({ where: { id } });
   revalidateTag(TAGS.prices);
-  revalidatePath("/prices");
+  revalidatePath("/products");
   return {};
 }
 
@@ -488,5 +631,97 @@ export async function toggleChecklist(taskId: number, date: string): Promise<Act
     await prisma.checklistCheck.create({ data: { taskId, date, branchId: branch.id, userId: me.id } });
   }
   revalidatePath(`/day/${date}`);
+  return {};
+}
+
+/* ---------------- Thương hiệu (admin) ---------------- */
+
+export async function saveBrand(fd: FormData): Promise<ActionResult> {
+  const me = await getSessionUser();
+  if (!me || !isAdmin(me)) return NO_PERMISSION;
+
+  const id = Number(str(fd, "id")) || null;
+  const name = str(fd, "name");
+  if (!name) return { error: "Vui lòng nhập tên thương hiệu." };
+  const dup = await prisma.brand.findFirst({ where: { name: { equals: name, mode: "insensitive" } } });
+  if (dup && dup.id !== id) return { error: "Thương hiệu này đã có." };
+
+  const data = { name, active: str(fd, "active") !== "false" };
+  if (id) await prisma.brand.update({ where: { id }, data });
+  else await prisma.brand.create({ data });
+  revalidateTag(TAGS.prices);
+  revalidatePath("/brands");
+  revalidatePath("/products");
+  return {};
+}
+
+/* ---------------- Tin tức (admin) ---------------- */
+
+const POST_CATEGORIES = ["NEWS", "PROMOTION", "GUIDE"];
+
+export async function savePost(fd: FormData): Promise<ActionResult> {
+  const me = await getSessionUser();
+  if (!me || !isAdmin(me)) return NO_PERMISSION;
+
+  const id = Number(str(fd, "id")) || null;
+  const title = str(fd, "title");
+  const category = str(fd, "category");
+  const status = str(fd, "status") === "PUBLISHED" ? "PUBLISHED" : "DRAFT";
+  const excerpt = optional(fd, "excerpt");
+  const content = str(fd, "content");
+  const coverImageUrl = optional(fd, "coverImageUrl");
+  const publishedAtRaw = str(fd, "publishedAt"); // "YYYY-MM-DDTHH:mm" theo giờ Việt Nam
+
+  if (!title) return { error: "Vui lòng nhập tiêu đề." };
+  if (title.length > 200) return { error: "Tiêu đề tối đa 200 ký tự." };
+  if (!POST_CATEGORIES.includes(category)) return { error: "Vui lòng chọn chuyên mục." };
+  if (excerpt && excerpt.length > 300) return { error: "Tóm tắt tối đa 300 ký tự." };
+  if (coverImageUrl && (!/^https?:\/\/\S+$/i.test(coverImageUrl) || coverImageUrl.length > 500))
+    return { error: "Link ảnh bìa phải bắt đầu bằng http:// hoặc https://" };
+  if (status === "PUBLISHED" && !content) return { error: "Bài đăng cần có nội dung." };
+  if (publishedAtRaw && !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(publishedAtRaw))
+    return { error: "Ngày đăng không hợp lệ." };
+
+  const existing = id ? await prisma.post.findUnique({ where: { id } }) : null;
+  if (id && !existing) return { error: "Không tìm thấy bài viết." };
+  const publishedAt = publishedAtRaw
+    ? new Date(`${publishedAtRaw}:00+07:00`)
+    : status === "PUBLISHED"
+      ? (existing?.publishedAt ?? new Date())
+      : (existing?.publishedAt ?? null);
+
+  // Slug: nhập tay hoặc tự tạo từ tiêu đề; thêm -2, -3... nếu trùng
+  const slugInput = slugify(str(fd, "slug"));
+  const base = slugInput || existing?.slug || slugify(title) || "bai-viet";
+  let slug = base;
+  for (let n = 2; await prisma.post.findFirst({ where: { slug, ...(id && { id: { not: id } }) } }); n++) {
+    if (slugInput && n === 2) return { error: `Đường dẫn "${slugInput}" đã được dùng cho bài khác.` };
+    slug = `${base}-${n}`;
+  }
+
+  const data = {
+    title,
+    slug,
+    category,
+    status,
+    excerpt,
+    content,
+    coverImageUrl,
+    publishedAt,
+    featured: str(fd, "featured") === "on",
+  };
+  if (id) await prisma.post.update({ where: { id }, data });
+  else await prisma.post.create({ data: { ...data, authorId: me.id } });
+  revalidateTag(TAGS.posts);
+  revalidatePath("/posts");
+  return {};
+}
+
+export async function deletePost(id: number): Promise<ActionResult> {
+  const me = await getSessionUser();
+  if (!me || !isAdmin(me)) return NO_PERMISSION;
+  await prisma.post.delete({ where: { id } });
+  revalidateTag(TAGS.posts);
+  revalidatePath("/posts");
   return {};
 }

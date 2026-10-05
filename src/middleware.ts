@@ -9,5 +9,6 @@ export function middleware(req: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/((?!login|_next/static|_next/image|favicon.ico).*)"],
+  // /api/public: API chỉ đọc cho web marketing, không cần đăng nhập
+  matcher: ["/((?!login|api/public|_next/static|_next/image|favicon.ico).*)"],
 };

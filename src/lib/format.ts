@@ -80,3 +80,23 @@ export function warrantyEnd(date: string, months: number) {
   if (end.getUTCDate() !== d) end.setUTCDate(0);
   return end.toISOString().slice(0, 10);
 }
+
+/** Ngày (YYYY-MM-DD) của một thời điểm theo giờ Việt Nam. */
+export function dateVN(d: Date) {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: TZ }).format(d);
+}
+
+/** Thời điểm → "YYYY-MM-DDTHH:mm" theo giờ Việt Nam (cho ô datetime-local). */
+export function dateTimeLocalVN(d: Date) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: TZ,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).formatToParts(d);
+  const get = (t: string) => parts.find((p) => p.type === t)?.value ?? "00";
+  return `${get("year")}-${get("month")}-${get("day")}T${get("hour") === "24" ? "00" : get("hour")}:${get("minute")}`;
+}

@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { MoneyInput } from "./MoneyInput";
 
-export type PriceSuggestion = { label: string; price: number; warrantyMonths?: number };
+export type PriceSuggestion = { label: string; price: number; warrantyMonths?: number; productId?: number };
 
 export function TransactionFields({
   shiftId,
@@ -19,6 +19,7 @@ export function TransactionFields({
   const [kind, setKind] = useState<"SALE" | "REPAIR">("SALE");
   const [payment, setPayment] = useState<"CASH" | "TRANSFER">("CASH");
   const [price, setPrice] = useState("");
+  const [productId, setProductId] = useState("");
   const [warranty, setWarranty] = useState(0);
   const needCustomer = warranty > 0;
   const suggestions = kind === "REPAIR" ? repairSuggestions : saleSuggestions;
@@ -27,6 +28,8 @@ export function TransactionFields({
 
   function onProductChange(name: string) {
     const match = suggestions.find((s) => s.label === name);
+    // Chỉ giữ liên kết sản phẩm khi tên khớp đúng gợi ý (để đánh dấu máy có IMEI là đã bán)
+    setProductId(kind === "SALE" && match?.productId ? String(match.productId) : "");
     if (match) {
       setPrice(String(match.price));
       if (match.warrantyMonths != null) setWarranty(match.warrantyMonths);
@@ -38,6 +41,7 @@ export function TransactionFields({
       <input type="hidden" name="shiftId" value={shiftId} />
       <input type="hidden" name="kind" value={kind} />
       <input type="hidden" name="paymentMethod" value={payment} />
+      <input type="hidden" name="productId" value={kind === "SALE" ? productId : ""} />
 
       <div className="col-span-full flex flex-wrap gap-3">
         <Segmented

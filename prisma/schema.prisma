@@ -16,6 +16,7 @@ model Branch {
   shifts        Shift[]
   tasks         ChecklistTask[]
   checks        ChecklistCheck[]
+  soldProducts  Product[]        @relation("ProductSoldAt")
   transfersFrom StockTransfer[]  @relation("TransferFrom")
   transfersTo   StockTransfer[]  @relation("TransferTo")
 }
@@ -32,6 +33,7 @@ model User {
   createdAt    DateTime         @default(now())
   shifts       Shift[]
   checks       ChecklistCheck[]
+  posts        Post[]
 }
 
 /// Một ca làm việc của một nhân viên trong một ngày tại một chi nhánh.
@@ -60,8 +62,12 @@ model Transaction {
   shiftId        Int
   shift          Shift    @relation(fields: [shiftId], references: [id], onDelete: Cascade)
   kind           String // SALE | REPAIR
+  /// Sản phẩm trong bảng giá được chọn khi bán (để đánh dấu máy có mã là đã bán, lấy giá nhập)
+  productId      Int?
+  product        Product? @relation(fields: [productId], references: [id], onDelete: SetNull)
   productName    String
   price          Int
+  costPrice      Int? // giá nhập tại thời điểm bán (lấy từ bảng giá), để tính lợi nhuận
   paymentMethod  String // CASH | TRANSFER
   bankAccount    String?
   warrantyMonths Int      @default(0) // 0-12; > 0 thì bắt buộc tên + SĐT khách
@@ -74,16 +80,21 @@ model Transaction {
   @@index([customerPhone])
 }
 
-/// Chuyển hàng giữa các chi nhánh, vd: nhập 5 tai nghe ABC từ Chi nhánh 1.
+/// Phiếu hàng hoá: nhập từ nhà cung cấp (IMPORT) hoặc chuyển giữa chi nhánh (TRANSFER).
 model StockTransfer {
   id           Int      @id @default(autoincrement())
+  type         String   @default("TRANSFER") // IMPORT | TRANSFER
   date         String // YYYY-MM-DD
+  productId    Int? // sản phẩm chọn từ danh sách hàng hoá
+  product      Product? @relation(fields: [productId], references: [id], onDelete: SetNull)
   productName  String
   quantity     Int
-  fromBranchId Int
-  fromBranch   Branch   @relation("TransferFrom", fields: [fromBranchId], references: [id])
+  fromBranchId Int? // null khi nhập từ nhà cung cấp
+  fromBranch   Branch?  @relation("TransferFrom", fields: [fromBranchId], references: [id])
   toBranchId   Int
   toBranch     Branch   @relation("TransferTo", fields: [toBranchId], references: [id])
+  supplier     String? // nhà cung cấp (phiếu nhập)
+  unitCost     Int? // giá nhập / đơn vị (phiếu nhập, chỉ admin thấy)
   staffName    String?
   note         String?
   createdAt    DateTime @default(now())
@@ -93,19 +104,42 @@ model StockTransfer {
 
 /// Bảng giá điện thoại / phụ kiện để nhân viên tra cứu khi bán.
 model Product {
-  id             Int      @id @default(autoincrement())
+  id             Int             @id @default(autoincrement())
   category       String // IPHONE | ANDROID | ACCESSORY
   name           String // VD: iPhone 13 Pro Max
+  brandId        Int? // thương hiệu (phụ kiện, Android)
+  brand          Brand?          @relation(fields: [brandId], references: [id])
   variant        String? // VD: 128GB - Xanh
-  condition      String   @default("NEW") // NEW | USED (máy cũ / 99%)
+  ramGb          Int? // điện thoại: RAM (GB)
+  storageGb      Int? // điện thoại: bộ nhớ trong (GB), 1TB = 1024
+  condition      String          @default("NEW") // NEW | USED (máy cũ / 99%)
   price          Int
-  warrantyMonths Int      @default(0) // bảo hành mặc định khi bán
+  costPrice      Int? // giá nhập (chỉ admin thấy) để tính lợi nhuận
+  warrantyMonths Int             @default(0) // bảo hành mặc định khi bán
+  code           String? // mã sản phẩm: IMEI (máy) hoặc mã vạch / mã riêng (phụ kiện)
+  batteryHealth  Int? // chỉ iPhone: tình trạng pin %, vd 88
+  /// Đã bán: chi nhánh bán + thời điểm (null = chưa bán). Điện thoại có mã tự đánh dấu khi bán qua giao dịch.
+  soldBranchId   Int?
+  soldBranch     Branch?         @relation("ProductSoldAt", fields: [soldBranchId], references: [id])
+  soldAt         DateTime?
+  transactions   Transaction[]
+  stockTransfers StockTransfer[]
   note           String? // tình trạng, pin, bảo hành...
-  active         Boolean  @default(true) // còn bán
-  updatedAt      DateTime @updatedAt
-  createdAt      DateTime @default(now())
+  /// --- Hiển thị trên web marketing (API công khai /api/public) ---
+  showOnWeb      Boolean         @default(false) // chỉ sản phẩm bật cờ này mới xuất hiện trên web
+  slug           String? // đường dẫn web, tự tạo từ tên nếu để trống (không trùng — kiểm tra trong code)
+  description    String? // mô tả cho web
+  salePrice      Int? // giá khuyến mãi (nhỏ hơn giá bán)
+  featured       Boolean         @default(false) // nổi bật trên web
+  sortOrder      Int             @default(0) // số nhỏ hiện trước
+  imageUrls      String[]        @default([]) // link ảnh, ảnh đầu là ảnh đại diện
+  active         Boolean         @default(true) // còn bán
+  updatedAt      DateTime        @updatedAt
+  createdAt      DateTime        @default(now())
 
   @@index([category])
+  @@index([slug])
+  @@index([showOnWeb])
 }
 
 /// Bảng giá sửa chữa: thay pin, thay màn hình, ép kính...
@@ -149,4 +183,34 @@ model ChecklistCheck {
 
   @@unique([taskId, date, branchId])
   @@index([date, branchId])
+}
+
+/// Thương hiệu sản phẩm (Samsung, Anker, Baseus...) — admin quản lý, chọn khi nhập phụ kiện / Android.
+model Brand {
+  id        Int       @id @default(autoincrement())
+  name      String    @unique
+  active    Boolean   @default(true)
+  createdAt DateTime  @default(now())
+  products  Product[]
+}
+
+/// Bài viết tin tức cho web marketing (API công khai /api/public/posts).
+model Post {
+  id            Int       @id @default(autoincrement())
+  title         String
+  slug          String // không trùng — kiểm tra trong code
+  category      String    @default("NEWS") // NEWS | PROMOTION | GUIDE
+  excerpt       String? // tóm tắt ngắn hiện ở danh sách
+  content       String    @default("") // Markdown
+  coverImageUrl String?
+  status        String    @default("DRAFT") // DRAFT | PUBLISHED
+  publishedAt   DateTime? // ngày đăng; > hiện tại = hẹn giờ
+  featured      Boolean   @default(false)
+  authorId      Int?
+  author        User?     @relation(fields: [authorId], references: [id], onDelete: SetNull)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@index([slug])
+  @@index([status, publishedAt])
 }

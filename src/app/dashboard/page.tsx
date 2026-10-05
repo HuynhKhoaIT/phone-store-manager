@@ -28,6 +28,9 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
   ]);
 
   const sum = summarize(txs);
+  // Lợi nhuận: chỉ tính các giao dịch bán từ bảng giá có giá nhập
+  const withCost = txs.filter((t) => t.costPrice != null);
+  const profit = withCost.reduce((s, t) => s + t.price - (t.costPrice ?? 0), 0);
   const prev = prevTotal._sum.price ?? 0;
   const growth = prev > 0 ? ((sum.total - prev) / prev) * 100 : null;
 
@@ -96,7 +99,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
         </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
         <div className="card">
           <p className="text-xs font-medium text-slate-500">Doanh thu tháng</p>
           <p className="mt-1 text-2xl font-bold text-blue-700 tabular-nums">{formatVND(sum.total)}</p>
@@ -116,6 +119,17 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
                 so với tháng trước ({formatVND(prev)})
               </>
             )}
+          </p>
+        </div>
+        <div className="card">
+          <p className="text-xs font-medium text-slate-500">Lợi nhuận</p>
+          <p className={`mt-1 text-2xl font-bold tabular-nums ${profit >= 0 ? "text-green-700" : "text-red-600"}`}>
+            {formatVND(profit)}
+          </p>
+          <p className="mt-0.5 text-xs text-slate-500">
+            {withCost.length === 0
+              ? "Chưa có giao dịch nào có giá nhập"
+              : `Tính trên ${withCost.length}/${sum.count} giao dịch có giá nhập`}
           </p>
         </div>
         <Tile label="Bán hàng" value={formatVND(sum.sale)} sub={pct(sum.sale, sum.total)} />

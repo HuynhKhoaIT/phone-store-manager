@@ -1,7 +1,7 @@
 import { cache } from "react";
 import { cookies } from "next/headers";
 import { unstable_cache } from "next/cache";
-import { TAGS } from "./cache";
+import { CACHE_SECONDS, TAGS } from "./cache";
 import { prisma } from "./db";
 import { getSessionUser, type SessionUser } from "./auth";
 
@@ -13,13 +13,13 @@ const BRANCH_FIELDS = { id: true, name: true, active: true } as const;
 export const getBranches = unstable_cache(
   () => prisma.branch.findMany({ select: BRANCH_FIELDS, orderBy: { id: "asc" } }),
   ["branches-all"],
-  { tags: [TAGS.branches] },
+  { tags: [TAGS.branches], revalidate: CACHE_SECONDS },
 );
 
 export const getActiveBranches = unstable_cache(
   () => prisma.branch.findMany({ where: { active: true }, select: BRANCH_FIELDS, orderBy: { id: "asc" } }),
   ["branches-active"],
-  { tags: [TAGS.branches] },
+  { tags: [TAGS.branches], revalidate: CACHE_SECONDS },
 );
 
 /** Id các chi nhánh nhân viên được phân công (rỗng = mọi chi nhánh). */
@@ -29,7 +29,7 @@ const getAssignedBranchIds = unstable_cache(
       (b) => b.id,
     ),
   ["user-branch-ids"],
-  { tags: [TAGS.users, TAGS.branches] },
+  { tags: [TAGS.users, TAGS.branches], revalidate: CACHE_SECONDS },
 );
 
 /**
