@@ -1,3 +1,4 @@
+import { ChevronLeft, ChevronRight, CircleDot, TriangleAlert } from "lucide-react";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { prisma } from "@/lib/db";
@@ -55,11 +56,11 @@ export default async function HistoryPage({ searchParams }: { searchParams: Prom
         </div>
         <div className="flex items-center gap-2">
           <Link href={`/history?month=${addMonths(month, -1)}`} className="btn-secondary" aria-label="Tháng trước">
-            ←
+            <ChevronLeft size={16} aria-hidden />
           </Link>
           <NavInput type="month" value={month} hrefPrefix="/history?month=" label="Chọn tháng" />
           <Link href={`/history?month=${addMonths(month, 1)}`} className="btn-secondary" aria-label="Tháng sau">
-            →
+            <ChevronRight size={16} aria-hidden />
           </Link>
         </div>
       </div>
@@ -96,8 +97,16 @@ export default async function HistoryPage({ searchParams }: { searchParams: Prom
                         : `${Math.round(sum.total / 1000)}k`}
                     </span>
                     <span className="hidden text-[11px] text-slate-500 sm:block">{sum.count} giao dịch</span>
-                    {open && <span className="text-[10px] font-medium text-green-700">● đang mở</span>}
-                    {mismatch && <span className="text-[10px] font-medium text-red-600">⚠ lệch tiền</span>}
+                    {open && (
+                      <span className="flex items-center gap-1 text-[10px] font-medium text-green-700">
+                        <CircleDot size={10} aria-hidden /> đang mở
+                      </span>
+                    )}
+                    {mismatch && (
+                      <span className="flex items-center gap-1 text-[10px] font-medium text-red-600">
+                        <TriangleAlert size={10} aria-hidden /> lệch tiền
+                      </span>
+                    )}
                   </>
                 )}
               </Link>

@@ -1,3 +1,4 @@
+import { MapPin } from "lucide-react";
 import { requireUser } from "@/lib/auth";
 import { getAllowedBranches, getCurrentBranch } from "@/lib/branch";
 import { chooseBranch } from "../actions";
@@ -31,7 +32,9 @@ export default async function ChooseBranchPage() {
                 current?.id === b.id ? "border-blue-500" : ""
               }`}
             >
-              <span className="font-semibold">📍 {b.name}</span>
+              <span className="flex items-center gap-2 font-semibold">
+                <MapPin size={18} className="text-[#1677ff]" aria-hidden /> {b.name}
+              </span>
               {current?.id === b.id && <span className="text-sm text-blue-600">Đang chọn</span>}
             </button>
           </form>

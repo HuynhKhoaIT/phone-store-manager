@@ -1,3 +1,4 @@
+import { ArrowRight, ChevronLeft, ChevronRight } from "lucide-react";
 import Link from "next/link";
 import { prisma } from "@/lib/db";
 import { requireUser } from "@/lib/auth";
@@ -84,11 +85,11 @@ export default async function TransfersPage({ searchParams }: { searchParams: Pr
         </h2>
         <div className="flex items-center gap-2">
           <Link href={`/transfers?month=${addMonths(month, -1)}`} className="btn-secondary" aria-label="Tháng trước">
-            ←
+            <ChevronLeft size={16} aria-hidden />
           </Link>
           <NavInput type="month" value={month} hrefPrefix="/transfers?month=" label="Chọn tháng" />
           <Link href={`/transfers?month=${addMonths(month, 1)}`} className="btn-secondary" aria-label="Tháng sau">
-            →
+            <ChevronRight size={16} aria-hidden />
           </Link>
         </div>
       </div>
@@ -100,7 +101,7 @@ export default async function TransfersPage({ searchParams }: { searchParams: Pr
               <th>Ngày</th>
               <th>Sản phẩm</th>
               <th className="text-right">SL</th>
-              <th>Từ → Đến</th>
+              <th>Từ / Đến</th>
               <th>Người ghi</th>
               <th>Ghi chú</th>
               {isAdmin && <th></th>}
@@ -113,7 +114,10 @@ export default async function TransfersPage({ searchParams }: { searchParams: Pr
                 <td className="font-medium">{t.productName}</td>
                 <td className="text-right font-semibold tabular-nums">{t.quantity}</td>
                 <td className="whitespace-nowrap">
-                  {t.fromBranch.name} → <b>{t.toBranch.name}</b>
+                  <span className="inline-flex items-center gap-1">
+                    {t.fromBranch.name} <ArrowRight size={14} className="text-slate-400" aria-hidden />{" "}
+                    <b>{t.toBranch.name}</b>
+                  </span>
                 </td>
                 <td>{t.staffName}</td>
                 <td className="text-slate-600">{t.note}</td>

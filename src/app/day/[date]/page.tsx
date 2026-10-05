@@ -1,3 +1,4 @@
+import { ChevronLeft, ChevronRight } from "lucide-react";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { prisma } from "@/lib/db";
@@ -71,11 +72,11 @@ export default async function DayPage({ params }: { params: Promise<{ date: stri
         {isAdmin && (
           <div className="flex items-center gap-2">
             <Link href={`/day/${addDays(date, -1)}`} className="btn-secondary" aria-label="Ngày trước">
-              ←
+              <ChevronLeft size={16} aria-hidden />
             </Link>
             <NavInput type="date" value={date} hrefPrefix="/day/" label="Chọn ngày" />
             <Link href={`/day/${addDays(date, 1)}`} className="btn-secondary" aria-label="Ngày sau">
-              →
+              <ChevronRight size={16} aria-hidden />
             </Link>
             {date !== today && (
               <Link href={`/day/${today}`} className="btn-secondary">

@@ -1,3 +1,4 @@
+import { ArrowRight, MapPin } from "lucide-react";
 import Link from "next/link";
 import { prisma } from "@/lib/db";
 import { requireAdmin } from "@/lib/auth";
@@ -65,7 +66,8 @@ export default async function BranchesPage({ searchParams }: { searchParams: Pro
             <div className="flex items-start justify-between gap-2">
               <div>
                 <h2 className="text-lg font-semibold">
-                  📍 {b.name}
+                  <MapPin size={18} className="mr-1 inline text-[#1677ff]" aria-hidden />
+                  {b.name}
                   {!b.active && <span className="badge ml-2 bg-slate-100 align-middle text-slate-500">Ngừng hoạt động</span>}
                 </h2>
                 <p className="text-sm text-slate-500">{b._count.shifts} ca làm việc đã ghi nhận</p>
@@ -82,7 +84,7 @@ export default async function BranchesPage({ searchParams }: { searchParams: Pro
                 <p className="mt-1 text-slate-400">Chưa có</p>
               )}
               <Link href={`/users?branch=${b.id}`} className="mt-2 inline-block text-blue-600 hover:underline">
-                Xem / phân công nhân viên →
+                Xem / phân công nhân viên <ArrowRight size={14} className="inline" aria-hidden />
               </Link>
             </div>
           </section>

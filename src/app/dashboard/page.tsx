@@ -1,3 +1,4 @@
+import { ChevronLeft, ChevronRight, TrendingDown, TrendingUp } from "lucide-react";
 import Link from "next/link";
 import { prisma } from "@/lib/db";
 import { requireAdmin } from "@/lib/auth";
@@ -80,7 +81,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
             <button className="btn-secondary">Lọc</button>
           </form>
           <Link href={qs({ month: prevMonth })} className="btn-secondary" aria-label="Tháng trước">
-            ←
+            <ChevronLeft size={16} aria-hidden />
           </Link>
           <NavInput
             type="month"
@@ -90,7 +91,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
             label="Chọn tháng"
           />
           <Link href={qs({ month: addMonths(month, 1) })} className="btn-secondary" aria-label="Tháng sau">
-            →
+            <ChevronRight size={16} aria-hidden />
           </Link>
         </div>
       </div>
@@ -105,7 +106,12 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
             ) : (
               <>
                 <span className={growth >= 0 ? "text-green-700" : "text-red-600"}>
-                  {growth >= 0 ? "▲" : "▼"} {Math.abs(growth).toLocaleString("vi-VN", { maximumFractionDigits: 1 })}%
+                  {growth >= 0 ? (
+                    <TrendingUp size={12} className="inline" aria-hidden />
+                  ) : (
+                    <TrendingDown size={12} className="inline" aria-hidden />
+                  )}{" "}
+                  {Math.abs(growth).toLocaleString("vi-VN", { maximumFractionDigits: 1 })}%
                 </span>{" "}
                 so với tháng trước ({formatVND(prev)})
               </>

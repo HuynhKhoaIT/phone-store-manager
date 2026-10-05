@@ -1,3 +1,4 @@
+import { ChevronLeft, ChevronRight, MapPin } from "lucide-react";
 import Link from "next/link";
 import { prisma } from "@/lib/db";
 import { requireUser } from "@/lib/auth";
@@ -80,7 +81,7 @@ export default async function TimesheetPage({ searchParams }: { searchParams: Pr
             </form>
           )}
           <Link href={qs({ month: addMonths(month, -1) })} className="btn-secondary" aria-label="Tháng trước">
-            ←
+            <ChevronLeft size={16} aria-hidden />
           </Link>
           <NavInput
             type="month"
@@ -90,7 +91,7 @@ export default async function TimesheetPage({ searchParams }: { searchParams: Pr
             label="Chọn tháng"
           />
           <Link href={qs({ month: addMonths(month, 1) })} className="btn-secondary" aria-label="Tháng sau">
-            →
+            <ChevronRight size={16} aria-hidden />
           </Link>
         </div>
       </div>
@@ -106,7 +107,9 @@ export default async function TimesheetPage({ searchParams }: { searchParams: Pr
         </div>
         {[...byBranch].map(([name, b]) => (
           <div key={name} className="card">
-            <p className="text-xs font-medium text-slate-500">📍 {name}</p>
+            <p className="flex items-center gap-1 text-xs font-medium text-slate-500">
+              <MapPin size={12} aria-hidden /> {name}
+            </p>
             <p className="mt-1 text-lg font-bold tabular-nums">{b.days.size} ngày</p>
             <p className="text-xs text-slate-500">{formatHours(b.minutes)}</p>
           </div>

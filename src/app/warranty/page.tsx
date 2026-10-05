@@ -89,7 +89,7 @@ export default async function WarrantyPage({ searchParams }: { searchParams: Pro
                     {formatDate(end)}
                     <div>
                       <span className={`badge ${valid ? "bg-green-100 text-green-800" : "bg-slate-100 text-slate-500"}`}>
-                        {valid ? "✓ Còn bảo hành" : "Hết hạn"}
+                        {valid ? "Còn bảo hành" : "Hết hạn"}
                       </span>
                     </div>
                   </td>

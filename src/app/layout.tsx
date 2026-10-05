@@ -1,8 +1,9 @@
 import type { Metadata } from "next";
+import { cookies } from "next/headers";
 import { getAllowedBranches, getCurrentBranch } from "@/lib/branch";
 import { getSessionUser } from "@/lib/auth";
-import { logout } from "./actions";
-import { Sidebar } from "@/components/Sidebar";
+import { AppShell } from "@/components/AppShell";
+import { SIDER_COOKIE } from "@/lib/ui";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -18,32 +19,29 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   if (!user) {
     return (
       <html lang="vi">
-        <body className="min-h-screen antialiased">{children}</body>
+        <body className="min-h-screen bg-[#f5f5f5] antialiased">{children}</body>
       </html>
     );
   }
 
-  const [allowed, current] = await Promise.all([getAllowedBranches(user), getCurrentBranch()]);
+  const [allowed, current, cookieStore] = await Promise.all([
+    getAllowedBranches(user),
+    getCurrentBranch(),
+    cookies(),
+  ]);
 
   return (
     <html lang="vi">
-      <body className="min-h-screen antialiased">
-        <Sidebar
+      <body className="antialiased">
+        <AppShell
           isAdmin={user.role === "ADMIN"}
+          userName={user.name}
           branchName={current?.name ?? null}
           canChangeBranch={allowed.length > 1 || !current}
-          userName={user.name}
-          footer={
-            <form action={logout}>
-              <button className="mt-1 w-full rounded-md px-3 py-2 text-left text-slate-400 hover:bg-slate-800 hover:text-white">
-                ↩ Đăng xuất
-              </button>
-            </form>
-          }
-        />
-        <main className="px-4 py-5 lg:ml-64 lg:px-8 lg:py-6">
-          <div className="mx-auto max-w-6xl">{children}</div>
-        </main>
+          initialCollapsed={cookieStore.get(SIDER_COOKIE)?.value === "collapsed"}
+        >
+          {children}
+        </AppShell>
       </body>
     </html>
   );

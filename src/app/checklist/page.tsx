@@ -1,3 +1,4 @@
+import { ChevronDown, ChevronUp, MapPin } from "lucide-react";
 import Link from "next/link";
 import { prisma } from "@/lib/db";
 import { requireAdmin } from "@/lib/auth";
@@ -39,7 +40,9 @@ export default async function ChecklistPage({ searchParams }: { searchParams: Pr
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {progress.map((p) => (
             <div key={p.branch.id} className="card">
-              <p className="text-xs font-medium text-slate-500">Hôm nay · 📍 {p.branch.name}</p>
+              <p className="flex items-center gap-1 text-xs font-medium text-slate-500">
+                Hôm nay · <MapPin size={12} aria-hidden /> {p.branch.name}
+              </p>
               <p
                 className={`mt-1 text-xl font-bold tabular-nums ${p.total && p.done === p.total ? "text-green-700" : ""}`}
               >
@@ -133,7 +136,7 @@ export default async function ChecklistPage({ searchParams }: { searchParams: Pr
                     noConfirm
                     disabled={i === 0}
                   >
-                    ▲
+                    <ChevronUp size={14} aria-label="Lên" />
                   </ConfirmButton>
                   <ConfirmButton
                     action={moveChecklistTask.bind(null, t.id, 1)}
@@ -142,7 +145,7 @@ export default async function ChecklistPage({ searchParams }: { searchParams: Pr
                     noConfirm
                     disabled={i === tasks.length - 1}
                   >
-                    ▼
+                    <ChevronDown size={14} aria-label="Xuống" />
                   </ConfirmButton>
                 </div>
                 <div className="min-w-0 flex-1">
@@ -151,7 +154,7 @@ export default async function ChecklistPage({ searchParams }: { searchParams: Pr
                     {!t.active && <span className="badge ml-2 bg-slate-100 text-slate-500">Tạm ẩn</span>}
                   </p>
                   <p className="text-xs text-slate-500">
-                    {t.branch ? `📍 ${t.branch.name}` : "Tất cả chi nhánh"}
+                    {t.branch ? t.branch.name : "Tất cả chi nhánh"}
                     {t.description && ` · ${t.description}`}
                   </p>
                 </div>

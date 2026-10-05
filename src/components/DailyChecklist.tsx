@@ -1,5 +1,6 @@
 "use client";
 
+import { Check, ListChecks } from "lucide-react";
 import { useOptimistic, useTransition } from "react";
 import { toggleChecklist } from "@/app/actions";
 
@@ -35,7 +36,9 @@ export function DailyChecklist({ date, items, editable }: { date: string; items:
   return (
     <section className="card">
       <div className="mb-3 flex items-center justify-between gap-3">
-        <h2 className="font-semibold">✅ Việc cần làm trong ngày</h2>
+        <h2 className="flex items-center gap-2 font-semibold">
+          <ListChecks size={18} className="text-green-600" aria-hidden /> Việc cần làm trong ngày
+        </h2>
         <span className={`text-sm font-semibold tabular-nums ${done === items.length ? "text-green-700" : "text-slate-600"}`}>
           {done}/{items.length}
         </span>
@@ -69,8 +72,8 @@ export function DailyChecklist({ date, items, editable }: { date: string; items:
                   <span className={`block font-medium ${isDone ? "text-slate-400 line-through" : ""}`}>{it.title}</span>
                   {it.description && <span className="block text-xs text-slate-500">{it.description}</span>}
                   {isDone && (
-                    <span className="block text-xs text-green-700">
-                      ✓ {it.doneBy} · {it.doneAt}
+                    <span className="flex items-center gap-1 text-xs text-green-700">
+                      <Check size={12} aria-hidden /> {it.doneBy} · {it.doneAt}
                     </span>
                   )}
                 </span>

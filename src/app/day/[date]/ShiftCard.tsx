@@ -1,3 +1,4 @@
+import { TriangleAlert } from "lucide-react";
 import type { Shift, Transaction } from "@prisma/client";
 import { summarize } from "@/lib/summary";
 import { formatTimeVN, formatVND, KIND_LABEL } from "@/lib/format";
@@ -173,7 +174,7 @@ export function ShiftCard({
               <p
                 className={`font-semibold tabular-nums ${diff === 0 ? "text-green-700" : diff < 0 ? "text-red-600" : "text-amber-700"}`}
               >
-                {diff === 0 ? "✓ Khớp" : `${diff > 0 ? "+" : "−"}${formatVND(Math.abs(diff))} ${diff < 0 ? "(thiếu)" : "(dư)"}`}
+                {diff === 0 ? "Khớp" : `${diff > 0 ? "+" : "−"}${formatVND(Math.abs(diff))} ${diff < 0 ? "(thiếu)" : "(dư)"}`}
               </p>
             </div>
           </div>
@@ -185,7 +186,8 @@ export function ShiftCard({
             <summary className="cursor-pointer font-semibold">Kết thúc ca / Bàn giao</summary>
             {checklistLeft > 0 && (
               <p className="mt-2 rounded-md bg-amber-100 px-3 py-2 text-sm text-amber-800">
-                ⚠ Còn {checklistLeft} việc trong checklist hôm nay chưa hoàn thành.
+                <TriangleAlert size={16} className="mr-1 inline align-text-bottom" aria-hidden />
+                Còn {checklistLeft} việc trong checklist hôm nay chưa hoàn thành.
               </p>
             )}
             <p className="mt-2 text-sm text-slate-600">
