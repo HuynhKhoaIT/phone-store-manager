@@ -1,0 +1,152 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Branch {
+  id            Int              @id @default(autoincrement())
+  name          String           @unique
+  active        Boolean          @default(true) // ẩn khi đóng cửa chi nhánh, vẫn giữ lịch sử
+  createdAt     DateTime         @default(now())
+  staff         User[]           @relation("UserBranches")
+  shifts        Shift[]
+  tasks         ChecklistTask[]
+  checks        ChecklistCheck[]
+  transfersFrom StockTransfer[]  @relation("TransferFrom")
+  transfersTo   StockTransfer[]  @relation("TransferTo")
+}
+
+model User {
+  id           Int              @id @default(autoincrement())
+  username     String           @unique
+  name         String
+  passwordHash String
+  role         String           @default("STAFF") // ADMIN | STAFF
+  /// Chi nhánh được phép làm việc; để trống = làm được ở mọi chi nhánh
+  branches     Branch[]         @relation("UserBranches")
+  active       Boolean          @default(true)
+  createdAt    DateTime         @default(now())
+  shifts       Shift[]
+  checks       ChecklistCheck[]
+}
+
+/// Một ca làm việc của một nhân viên trong một ngày tại một chi nhánh.
+model Shift {
+  id           Int           @id @default(autoincrement())
+  date         String // YYYY-MM-DD (giờ Việt Nam)
+  branchId     Int
+  branch       Branch        @relation(fields: [branchId], references: [id])
+  userId       Int?
+  user         User?         @relation(fields: [userId], references: [id])
+  staffName    String
+  checkIn      String // HH:mm
+  openingCash  Int // tiền nhận đầu ca
+  checkOut     String? // HH:mm
+  handoverCash Int? // tiền mặt bàn giao cuối ca
+  closingNote  String?
+  closedAt     DateTime?
+  createdAt    DateTime      @default(now())
+  transactions Transaction[]
+
+  @@index([date, branchId])
+}
+
+model Transaction {
+  id             Int      @id @default(autoincrement())
+  shiftId        Int
+  shift          Shift    @relation(fields: [shiftId], references: [id], onDelete: Cascade)
+  kind           String // SALE | REPAIR
+  productName    String
+  price          Int
+  paymentMethod  String // CASH | TRANSFER
+  bankAccount    String?
+  warrantyMonths Int      @default(0) // 0-12; > 0 thì bắt buộc tên + SĐT khách
+  customerName   String?
+  customerPhone  String?
+  note           String?
+  createdAt      DateTime @default(now())
+
+  @@index([shiftId])
+  @@index([customerPhone])
+}
+
+/// Chuyển hàng giữa các chi nhánh, vd: nhập 5 tai nghe ABC từ Chi nhánh 1.
+model StockTransfer {
+  id           Int      @id @default(autoincrement())
+  date         String // YYYY-MM-DD
+  productName  String
+  quantity     Int
+  fromBranchId Int
+  fromBranch   Branch   @relation("TransferFrom", fields: [fromBranchId], references: [id])
+  toBranchId   Int
+  toBranch     Branch   @relation("TransferTo", fields: [toBranchId], references: [id])
+  staffName    String?
+  note         String?
+  createdAt    DateTime @default(now())
+
+  @@index([date])
+}
+
+/// Bảng giá điện thoại / phụ kiện để nhân viên tra cứu khi bán.
+model Product {
+  id             Int      @id @default(autoincrement())
+  category       String // IPHONE | ANDROID | ACCESSORY
+  name           String // VD: iPhone 13 Pro Max
+  variant        String? // VD: 128GB - Xanh
+  condition      String   @default("NEW") // NEW | USED (máy cũ / 99%)
+  price          Int
+  warrantyMonths Int      @default(0) // bảo hành mặc định khi bán
+  note           String? // tình trạng, pin, bảo hành...
+  active         Boolean  @default(true) // còn bán
+  updatedAt      DateTime @updatedAt
+  createdAt      DateTime @default(now())
+
+  @@index([category])
+}
+
+/// Bảng giá sửa chữa: thay pin, thay màn hình, ép kính...
+model RepairPrice {
+  id        Int      @id @default(autoincrement())
+  service   String // VD: Thay pin
+  device    String // VD: iPhone 11
+  price     Int
+  warranty  String? // VD: 6 tháng
+  note      String?
+  updatedAt DateTime @updatedAt
+  createdAt DateTime @default(now())
+
+  @@index([service])
+}
+
+/// Việc cần làm hằng ngày do admin thiết lập (vệ sinh quán, đăng bài FB...).
+model ChecklistTask {
+  id          Int              @id @default(autoincrement())
+  title       String
+  description String?
+  branchId    Int? // null = áp dụng mọi chi nhánh
+  branch      Branch?          @relation(fields: [branchId], references: [id])
+  sortOrder   Int              @default(0)
+  active      Boolean          @default(true)
+  createdAt   DateTime         @default(now())
+  checks      ChecklistCheck[]
+}
+
+/// Đánh dấu một việc đã làm trong một ngày tại một chi nhánh.
+model ChecklistCheck {
+  id       Int           @id @default(autoincrement())
+  taskId   Int
+  task     ChecklistTask @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  date     String // YYYY-MM-DD
+  branchId Int
+  branch   Branch        @relation(fields: [branchId], references: [id])
+  userId   Int
+  user     User          @relation(fields: [userId], references: [id])
+  doneAt   DateTime      @default(now())
+
+  @@unique([taskId, date, branchId])
+  @@index([date, branchId])
+}
