@@ -1,15 +1,15 @@
 import Link from "next/link";
 
 const TABS = [
-  { href: "/products", label: "Danh sách hàng hoá", key: "list" },
-  { href: "/products/receipts", label: "Phiếu nhập / chuyển", key: "receipts" },
-  { href: "/products/loans", label: "Mượn hàng", key: "loans" },
+  { href: "/reports", label: "Lãi lỗ theo tháng", key: "pnl" },
+  { href: "/reports/break-even", label: "Hoà vốn", key: "break-even" },
+  { href: "/reports/capital", label: "Góp vốn", key: "capital" },
 ] as const;
 
-/** Tab con của trang Hàng hoá (kiểu antd Tabs). */
-export function ProductsTabs({ active }: { active: (typeof TABS)[number]["key"] }) {
+/** Tab con của trang Báo cáo (cùng kiểu với ProductsTabs). */
+export function ReportsTabs({ active }: { active: (typeof TABS)[number]["key"] }) {
   return (
-    <nav className="flex gap-6 border-b border-slate-200 text-sm" aria-label="Hàng hoá">
+    <nav className="flex gap-6 border-b border-slate-200 text-sm" aria-label="Báo cáo">
       {TABS.map((t) => (
         <Link
           key={t.key}

@@ -29,6 +29,7 @@ export type ProductFormValue = {
   warrantyMonths: number;
   active: boolean;
   soldBranchId: number | null;
+  ownerBranchId: number | null;
   note: string | null;
   showOnWeb: boolean;
   slug: string | null;
@@ -223,6 +224,18 @@ export function ProductFields({
           </select>
         </label>
       )}
+      <label className="field">
+        <span>Chi nhánh sở hữu</span>
+        <select name="ownerBranchId" defaultValue={product?.ownerBranchId ?? ""} className="input">
+          <option value="">— Không xác định —</option>
+          {branches.map((b) => (
+            <option key={b.id} value={b.id}>
+              {b.name}
+            </option>
+          ))}
+        </select>
+        <small className="text-slate-500">Quán nhập máy. Quán khác bán máy này sẽ tự ghi vào Mượn hàng.</small>
+      </label>
       <label className="field sm:col-span-2">
         <span>Ghi chú nội bộ</span>
         <input name="note" defaultValue={product?.note ?? ""} className="input" placeholder="VD: máy zin, đủ hộp (không hiện trên web)" />

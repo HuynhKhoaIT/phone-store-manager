@@ -75,7 +75,11 @@ export default async function PricesPage({ searchParams }: { searchParams: Promi
     // Lấy từ đầu tới hết trang hiện tại (điện thoại cộng dồn); thêm id để thứ tự cố định giữa các trang
     prisma.product.findMany({
       where,
-      include: { brand: { select: { name: true } }, soldBranch: { select: { name: true } } },
+      include: {
+        brand: { select: { name: true } },
+        soldBranch: { select: { name: true } },
+        ownerBranch: { select: { name: true } },
+      },
       orderBy:
         status === "SOLD"
           ? [{ soldAt: "desc" }, { id: "desc" }]
@@ -249,7 +253,11 @@ export default async function PricesPage({ searchParams }: { searchParams: Promi
                       .filter(Boolean)
                       .join(" · ")}
                   </p>
-                  {p.code && <p className="text-xs text-slate-500 tabular-nums">Mã {p.code}</p>}
+                  {(p.code || p.ownerBranch) && (
+                    <p className="text-xs text-slate-500 tabular-nums">
+                      {[p.code && `Mã ${p.code}`, p.ownerBranch && `Hàng của ${p.ownerBranch.name}`].filter(Boolean).join(" · ")}
+                    </p>
+                  )}
                   {isAdmin && p.costPrice != null && <ProfitLine cost={p.costPrice} price={p.price} />}
                   <div className="mt-2 flex flex-wrap items-center gap-1.5">
                     <ConditionBadge condition={p.condition} />
@@ -314,6 +322,7 @@ export default async function PricesPage({ searchParams }: { searchParams: Promi
                     <div className="text-xs text-slate-500">
                       {[p.brand?.name, !cat && CATEGORY_LABEL[p.category]].filter(Boolean).join(" · ")}
                       {p.code && <span className="tabular-nums"> · Mã {p.code}</span>}
+                      {p.ownerBranch && <span> · Hàng của {p.ownerBranch.name}</span>}
                     </div>
                     {p.note && <div className="text-xs text-slate-400">{p.note}</div>}
                       </div>

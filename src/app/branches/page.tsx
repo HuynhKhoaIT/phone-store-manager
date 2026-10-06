@@ -1,4 +1,4 @@
-import { ArrowRight, MapPin } from "lucide-react";
+import { ArrowRight, MapPin, PiggyBank } from "lucide-react";
 import Link from "next/link";
 import type { Branch } from "@prisma/client";
 import { prisma } from "@/lib/db";
@@ -6,6 +6,7 @@ import { requireAdmin } from "@/lib/auth";
 import { saveBranch } from "../actions";
 import { ActionForm } from "@/components/ActionForm";
 import { FormDialog } from "@/components/FormDialog";
+import { formatDate, formatVND } from "@/lib/format";
 import { PageHeader } from "@/components/PageHeader";
 import { Pagination } from "@/components/Pagination";
 import { getPaging, pageHref, rowClass } from "@/lib/paging";
@@ -28,6 +29,13 @@ export default async function BranchesPage({ searchParams }: { searchParams: Pro
   ]);
   const backHref = pageHref("/branches", {})(paging.page);
   const editHref = (id: number) => `${backHref}${backHref.includes("?") ? "&" : "?"}edit=${id}`;
+  // Vốn góp mỗi chi nhánh lấy từ sổ vốn (Báo cáo › Góp vốn)
+  const capital = await prisma.capitalEntry.groupBy({
+    by: ["branchId"],
+    where: { type: "CONTRIBUTE" },
+    _sum: { amount: true },
+  });
+  const investmentOf = (id: number) => capital.find((c) => c.branchId === id)?._sum.amount ?? 0;
   const unassigned = await prisma.user.findMany({
     where: { active: true, role: "STAFF", branches: { none: {} } },
     select: { name: true },
@@ -45,6 +53,11 @@ export default async function BranchesPage({ searchParams }: { searchParams: Pro
       <label className="field sm:col-span-2">
         <span>Tên chi nhánh *</span>
         <input name="name" required defaultValue={editing?.name} className="input" placeholder="VD: Chi nhánh 3" />
+      </label>
+      <label className="field">
+        <span>Bắt đầu tính hoà vốn từ</span>
+        <input name="openedAt" type="date" defaultValue={editing?.openedAt ?? ""} className="input" />
+        <small className="text-slate-500">Để trống = từ ca làm việc đầu tiên. Vốn góp ghi ở Báo cáo › Góp vốn.</small>
       </label>
       {editing && (
         <label className="field">
@@ -90,6 +103,16 @@ export default async function BranchesPage({ searchParams }: { searchParams: Pro
                   {!b.active && <span className="badge ml-2 bg-slate-100 align-middle text-slate-500">Ngừng hoạt động</span>}
                 </h2>
                 <p className="text-sm text-slate-500">{b._count.shifts} ca làm việc đã ghi nhận</p>
+                {(investmentOf(b.id) > 0 || b.openedAt) && (
+                  <p className="mt-1 text-sm text-slate-600">
+                    <PiggyBank size={14} className="mr-1 inline align-text-bottom text-slate-400" aria-hidden />
+                    Vốn góp {formatVND(investmentOf(b.id))}
+                    {b.openedAt && ` · tính từ ${formatDate(b.openedAt)}`} ·{" "}
+                    <Link href="/reports/break-even" className="text-blue-600 hover:underline">
+                      Xem hoà vốn
+                    </Link>
+                  </p>
+                )}
               </div>
               <Link href={editHref(b.id)} className="text-sm text-blue-600 hover:underline">
                 Sửa

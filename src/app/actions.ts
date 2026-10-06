@@ -185,15 +185,18 @@ export async function saveBranch(fd: FormData): Promise<ActionResult> {
   const id = Number(str(fd, "id")) || null;
   const name = str(fd, "name");
   const active = str(fd, "active") !== "false";
+  // Ngày bắt đầu tính hoà vốn (trang Báo cáo › Hoà vốn); để trống = từ ca đầu tiên
+  const openedAt = optional(fd, "openedAt");
   if (!name) return { error: "Vui lòng nhập tên chi nhánh." };
+  if (openedAt && !isValidDate(openedAt)) return { error: "Ngày bắt đầu tính không hợp lệ." };
 
   const dup = await prisma.branch.findUnique({ where: { name } });
   if (dup && dup.id !== id) return { error: "Tên chi nhánh đã tồn tại." };
   if (id && !active && (await prisma.branch.count({ where: { active: true, id: { not: id } } })) === 0)
     return { error: "Phải còn ít nhất 1 chi nhánh đang hoạt động." };
 
-  if (id) await prisma.branch.update({ where: { id }, data: { name, active } });
-  else await prisma.branch.create({ data: { name } });
+  if (id) await prisma.branch.update({ where: { id }, data: { name, active, openedAt } });
+  else await prisma.branch.create({ data: { name, openedAt } });
   revalidateTag(TAGS.branches);
   revalidatePath("/", "layout");
   return {};
@@ -279,8 +282,11 @@ export async function addTransaction(fd: FormData): Promise<ActionResult> {
   const markSold = !!product && isSingleUnit(product);
   if (markSold && product.soldBranchId != null) return { error: "Máy này đã được bán trước đó." };
 
-  await prisma.$transaction([
-    prisma.transaction.create({
+  // Bán máy của chi nhánh khác (mượn hàng) → quán bán nợ quán sở hữu giá nhập, ghi vào sổ Mượn hàng
+  const borrowed = markSold && product.ownerBranchId != null && product.ownerBranchId !== found.shift.branchId;
+
+  await prisma.$transaction(async (db) => {
+    const tx = await db.transaction.create({
       data: {
         shiftId: found.shift.id,
         kind,
@@ -295,16 +301,35 @@ export async function addTransaction(fd: FormData): Promise<ActionResult> {
         customerPhone: customerPhone?.replace(/[ .-]/g, "") ?? null,
         note: optional(fd, "note"),
       },
-    }),
-    ...(markSold
-      ? [
-          prisma.product.update({
-            where: { id: product.id },
-            data: { soldBranchId: found.shift.branchId, soldAt: new Date() },
-          }),
-        ]
-      : []),
-  ]);
+    });
+    if (!markSold) return;
+    await db.product.update({
+      where: { id: product.id },
+      data: { soldBranchId: found.shift.branchId, soldAt: new Date() },
+    });
+    if (!borrowed) return;
+    const sale = { status: "SOLD", transactionId: tx.id, soldDate: found.shift.date, amount: product.costPrice ?? 0 };
+    // Đã ghi "đang mượn" trước đó thì cập nhật dòng đó; chưa ghi thì tự tạo
+    const open = await db.branchLoan.findFirst({
+      where: { productId: product.id, borrowerBranchId: found.shift.branchId, status: "BORROWED" },
+      orderBy: { id: "asc" },
+    });
+    if (open) await db.branchLoan.update({ where: { id: open.id }, data: sale });
+    else
+      await db.branchLoan.create({
+        data: {
+          ...sale,
+          productId: product.id,
+          productName: productLabel(product),
+          lenderBranchId: product.ownerBranchId!,
+          borrowerBranchId: found.shift.branchId,
+          date: found.shift.date,
+          note: "Tự ghi khi bán",
+          createdBy: me.name,
+        },
+      });
+  });
+  if (borrowed) revalidatePath("/products/loans");
   if (markSold) {
     revalidateTag(TAGS.prices);
     revalidatePath("/products");
@@ -324,6 +349,12 @@ export async function deleteTransaction(id: number): Promise<ActionResult> {
   if ("error" in found) return { error: found.error };
   const product = tx.productId ? await prisma.product.findUnique({ where: { id: tx.productId } }) : null;
   await prisma.$transaction([
+    // Huỷ bán máy mượn: dòng mượn hàng chưa thanh toán quay về "đang mượn" (máy vẫn đang ở quán mượn).
+    // Đã thanh toán thì giữ nguyên để admin tự xử lý.
+    prisma.branchLoan.updateMany({
+      where: { transactionId: id, paidAt: null },
+      data: { status: "BORROWED", transactionId: null, soldDate: null },
+    }),
     prisma.transaction.delete({ where: { id } }),
     // Xoá giao dịch bán máy có mã → máy trở lại "đang bán"
     ...(product && isSingleUnit(product) && product.soldBranchId != null
@@ -332,7 +363,7 @@ export async function deleteTransaction(id: number): Promise<ActionResult> {
   ]);
   if (product && isSingleUnit(product)) {
     revalidateTag(TAGS.prices);
-    revalidatePath("/products");
+    revalidatePath("/products", "layout");
   }
   revalidatePath(`/day/${found.shift.date}`);
   return {};
@@ -463,6 +494,7 @@ export async function saveProduct(fd: FormData): Promise<ActionResult> {
   // Thương hiệu chỉ dùng cho Android / phụ kiện (iPhone mặc định Apple)
   const brandId = category !== "IPHONE" ? Number(str(fd, "brandId")) || null : null;
   const soldBranchId = status === "SOLD" ? Number(str(fd, "soldBranchId")) || null : null;
+  const ownerBranchId = Number(str(fd, "ownerBranchId")) || null;
 
   if (!CATEGORIES.includes(category)) return { error: "Vui lòng chọn loại sản phẩm." };
   if (!name) return { error: "Vui lòng nhập tên sản phẩm." };
@@ -539,6 +571,7 @@ export async function saveProduct(fd: FormData): Promise<ActionResult> {
     soldBranchId,
     // Giữ thời điểm bán cũ nếu vẫn là "đã bán"
     soldAt: soldBranchId ? (existing?.soldAt ?? new Date()) : null,
+    ownerBranchId,
   };
   if (id) await prisma.product.update({ where: { id }, data });
   else await prisma.product.create({ data });
@@ -798,5 +831,148 @@ export async function deleteExpense(id: number): Promise<ActionResult> {
   if (!me || !isAdmin(me)) return NO_PERMISSION;
   await prisma.expense.delete({ where: { id } });
   revalidatePath("/reports");
+  return {};
+}
+
+/* ---------------- Góp vốn (admin, Báo cáo › Góp vốn) ---------------- */
+
+export async function saveInvestor(fd: FormData): Promise<ActionResult> {
+  const me = await getSessionUser();
+  if (!me || !isAdmin(me)) return NO_PERMISSION;
+
+  const id = Number(str(fd, "id")) || null;
+  const name = str(fd, "name");
+  const phone = optional(fd, "phone");
+  if (!name) return { error: "Vui lòng nhập tên người góp vốn." };
+  if (phone && !PHONE_RE.test(phone)) return { error: "Số điện thoại không hợp lệ." };
+
+  const data = { name, phone, note: optional(fd, "note"), active: str(fd, "active") !== "false" };
+  if (id) await prisma.investor.update({ where: { id }, data });
+  else await prisma.investor.create({ data });
+  revalidatePath("/reports", "layout");
+  return {};
+}
+
+export async function saveCapitalEntry(fd: FormData): Promise<ActionResult> {
+  const me = await getSessionUser();
+  if (!me || !isAdmin(me)) return NO_PERMISSION;
+
+  const id = Number(str(fd, "id")) || null;
+  const type = str(fd, "type") === "WITHDRAW" ? "WITHDRAW" : "CONTRIBUTE";
+  const investorId = Number(str(fd, "investorId"));
+  const branchId = Number(str(fd, "branchId"));
+  const date = str(fd, "date");
+  const amount = money(fd, "amount");
+
+  if (!investorId || !(await prisma.investor.findUnique({ where: { id: investorId } })))
+    return { error: "Vui lòng chọn người góp vốn." };
+  if (!branchId || !(await prisma.branch.findUnique({ where: { id: branchId } })))
+    return { error: "Vui lòng chọn chi nhánh." };
+  if (!isValidDate(date)) return { error: "Ngày không hợp lệ." };
+  if (!Number.isFinite(amount) || amount <= 0) return { error: "Vui lòng nhập số tiền." };
+
+  const data = { type, investorId, branchId, date, amount, note: optional(fd, "note") };
+  if (id) await prisma.capitalEntry.update({ where: { id }, data });
+  else await prisma.capitalEntry.create({ data: { ...data, createdBy: me.name } });
+  revalidatePath("/reports", "layout");
+  revalidatePath("/branches");
+  return {};
+}
+
+export async function deleteCapitalEntry(id: number): Promise<ActionResult> {
+  const me = await getSessionUser();
+  if (!me || !isAdmin(me)) return NO_PERMISSION;
+  await prisma.capitalEntry.delete({ where: { id } });
+  revalidatePath("/reports", "layout");
+  revalidatePath("/branches");
+  return {};
+}
+
+/* ---------------- Mượn hàng giữa chi nhánh (Hàng hoá › Mượn hàng) ---------------- */
+
+/** Ghi mượn hàng (mọi người có quyền Hàng hoá). Sửa (số tiền, ghi chú) chỉ admin vì số tiền là giá nhập. */
+export async function saveLoan(fd: FormData): Promise<ActionResult> {
+  const me = await getSessionUser();
+  if (!me) return NOT_LOGGED_IN;
+  if (!can(me, "products")) return NO_PERMISSION;
+
+  const id = Number(str(fd, "id")) || null;
+  if (id) {
+    if (!isAdmin(me)) return NO_PERMISSION;
+    const amount = str(fd, "amount") ? money(fd, "amount") : 0;
+    if (!Number.isFinite(amount) || amount < 0) return { error: "Số tiền không hợp lệ." };
+    await prisma.branchLoan.update({ where: { id }, data: { amount, note: optional(fd, "note") } });
+    revalidatePath("/products/loans");
+    return {};
+  }
+
+  const date = str(fd, "date");
+  const quantity = Number(str(fd, "quantity") || 1);
+  const lenderBranchId = Number(str(fd, "lenderBranchId"));
+  const borrowerBranchId = Number(str(fd, "borrowerBranchId"));
+  const productId = Number(str(fd, "productId")) || null;
+  const product = productId ? await prisma.product.findUnique({ where: { id: productId } }) : null;
+  const productName = product ? productLabel(product) : str(fd, "productName");
+
+  if (!productName) return { error: "Vui lòng chọn sản phẩm." };
+  if (!Number.isInteger(quantity) || quantity <= 0) return { error: "Số lượng phải lớn hơn 0." };
+  if (!lenderBranchId || !borrowerBranchId || lenderBranchId === borrowerBranchId)
+    return { error: "Chi nhánh cho mượn và chi nhánh mượn phải khác nhau." };
+  if (!isValidDate(date)) return { error: "Ngày không hợp lệ." };
+  if (!isAdmin(me) && date > todayVN()) return { error: "Không thể ghi cho ngày trong tương lai." };
+
+  await prisma.branchLoan.create({
+    data: {
+      productId: product?.id ?? null,
+      productName,
+      quantity,
+      lenderBranchId,
+      borrowerBranchId,
+      date,
+      // Số tiền phải trả khi bán = giá nhập × SL (chưa có giá nhập thì admin nhập sau)
+      amount: (product?.costPrice ?? 0) * quantity,
+      note: optional(fd, "note"),
+      createdBy: me.name,
+    },
+  });
+  revalidatePath("/products/loans");
+  return {};
+}
+
+/**
+ * Đổi trạng thái: trả hàng / đã bán (quyền Hàng hoá), đã thanh toán / bỏ thanh toán (chỉ admin).
+ * `sold` dùng cho hàng bán ngoài trang Bán hàng (vd phụ kiện) — bán qua trang Bán hàng thì tự cập nhật.
+ */
+export async function setLoanStatus(id: number, action: "return" | "sold" | "paid" | "unpaid"): Promise<ActionResult> {
+  const me = await getSessionUser();
+  if (!me) return NOT_LOGGED_IN;
+  if (!can(me, "products")) return NO_PERMISSION;
+  if ((action === "paid" || action === "unpaid") && !isAdmin(me)) return NO_PERMISSION;
+  const loan = await prisma.branchLoan.findUnique({ where: { id } });
+  if (!loan) return { error: "Không tìm thấy." };
+
+  const today = todayVN();
+  if (action === "return" || action === "sold") {
+    if (loan.status !== "BORROWED") return { error: "Chỉ đổi được khi hàng đang mượn." };
+    await prisma.branchLoan.update({
+      where: { id },
+      data: action === "return" ? { status: "RETURNED", returnedDate: today } : { status: "SOLD", soldDate: today },
+    });
+  } else {
+    if (loan.status !== "SOLD") return { error: "Chỉ thanh toán được hàng đã bán." };
+    await prisma.branchLoan.update({
+      where: { id },
+      data: action === "paid" ? { paidAt: new Date(), paidBy: me.name } : { paidAt: null, paidBy: null },
+    });
+  }
+  revalidatePath("/products/loans");
+  return {};
+}
+
+export async function deleteLoan(id: number): Promise<ActionResult> {
+  const me = await getSessionUser();
+  if (!me || !isAdmin(me)) return NO_PERMISSION;
+  await prisma.branchLoan.delete({ where: { id } });
+  revalidatePath("/products/loans");
   return {};
 }

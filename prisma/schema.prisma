@@ -11,6 +11,8 @@ model Branch {
   id            Int              @id @default(autoincrement())
   name          String           @unique
   active        Boolean          @default(true) // ẩn khi đóng cửa chi nhánh, vẫn giữ lịch sử
+  /// Ngày bắt đầu tính hoà vốn (YYYY-MM-DD); null = từ ca làm việc đầu tiên của chi nhánh
+  openedAt      String?
   createdAt     DateTime         @default(now())
   staff         User[]           @relation("UserBranches")
   shifts        Shift[]
@@ -20,6 +22,10 @@ model Branch {
   transfersFrom StockTransfer[]  @relation("TransferFrom")
   transfersTo   StockTransfer[]  @relation("TransferTo")
   expenses      Expense[]
+  capital       CapitalEntry[]
+  ownedProducts Product[]        @relation("ProductOwner")
+  loansLent     BranchLoan[]     @relation("LoanLender")
+  loansBorrowed BranchLoan[]     @relation("LoanBorrower")
 }
 
 model User {
@@ -70,6 +76,7 @@ model Transaction {
   productId      Int?
   product        Product? @relation(fields: [productId], references: [id], onDelete: SetNull)
   productName    String
+  loans          BranchLoan[]
   price          Int
   costPrice      Int? // giá nhập tại thời điểm bán (lấy từ bảng giá), để tính lợi nhuận
   paymentMethod  String // CASH | TRANSFER
@@ -104,6 +111,66 @@ model StockTransfer {
   createdAt    DateTime @default(now())
 
   @@index([date])
+}
+
+/// Mượn hàng giữa chi nhánh: quán mượn (borrower) lấy hàng của quán cho mượn (lender).
+/// Đang mượn → Đã trả hàng, hoặc → Đã bán (quán mượn nợ quán cho mượn `amount` = giá nhập) → Đã thanh toán (`paidAt`).
+model BranchLoan {
+  id               Int          @id @default(autoincrement())
+  productId        Int?
+  product          Product?     @relation(fields: [productId], references: [id], onDelete: SetNull)
+  productName      String
+  quantity         Int          @default(1)
+  lenderBranchId   Int
+  lenderBranch     Branch       @relation("LoanLender", fields: [lenderBranchId], references: [id])
+  borrowerBranchId Int
+  borrowerBranch   Branch       @relation("LoanBorrower", fields: [borrowerBranchId], references: [id])
+  date             String // ngày mượn YYYY-MM-DD
+  status           String       @default("BORROWED") // BORROWED | RETURNED | SOLD
+  /// Số tiền quán mượn phải trả khi đã bán = giá nhập × SL (admin sửa được). Chỉ admin thấy
+  amount           Int          @default(0)
+  transactionId    Int? // giao dịch bán (tự gắn khi bán qua trang Bán hàng)
+  transaction      Transaction? @relation(fields: [transactionId], references: [id], onDelete: SetNull)
+  soldDate         String? // ngày bán YYYY-MM-DD
+  returnedDate     String? // ngày trả hàng
+  paidAt           DateTime? // đã thanh toán cho quán cho mượn
+  paidBy           String?
+  note             String?
+  createdBy        String
+  createdAt        DateTime     @default(now())
+
+  @@index([status])
+  @@index([productId])
+}
+
+/// Người góp vốn (có thể không phải nhân viên nên không dùng bảng User).
+model Investor {
+  id        Int            @id @default(autoincrement())
+  name      String
+  phone     String?
+  note      String?
+  active    Boolean        @default(true)
+  createdAt DateTime       @default(now())
+  entries   CapitalEntry[]
+}
+
+/// Sổ vốn: mỗi lần một người góp vốn vào / rút tiền ra khỏi một chi nhánh.
+/// Vốn đầu tư của chi nhánh = tổng tiền góp (CONTRIBUTE); rút (WITHDRAW) không phải chi phí nên không trừ vào lãi.
+model CapitalEntry {
+  id         Int      @id @default(autoincrement())
+  investorId Int
+  investor   Investor @relation(fields: [investorId], references: [id])
+  branchId   Int
+  branch     Branch   @relation(fields: [branchId], references: [id])
+  type       String // CONTRIBUTE (góp) | WITHDRAW (rút)
+  date       String // YYYY-MM-DD
+  amount     Int
+  note       String?
+  createdBy  String
+  createdAt  DateTime @default(now())
+
+  @@index([investorId])
+  @@index([branchId])
 }
 
 /// Chi phí vận hành (mặt bằng, lương, điện nước...) — trừ vào lãi gộp để ra lãi ròng ở trang Báo cáo.
@@ -141,6 +208,10 @@ model Product {
   soldBranchId   Int?
   soldBranch     Branch?         @relation("ProductSoldAt", fields: [soldBranchId], references: [id])
   soldAt         DateTime?
+  /// Chi nhánh sở hữu (nhập máy). Chi nhánh khác bán máy này → tự ghi vào sổ Mượn hàng (BranchLoan)
+  ownerBranchId  Int?
+  ownerBranch    Branch?         @relation("ProductOwner", fields: [ownerBranchId], references: [id])
+  loans          BranchLoan[]
   transactions   Transaction[]
   stockTransfers StockTransfer[]
   note           String? // tình trạng, pin, bảo hành...

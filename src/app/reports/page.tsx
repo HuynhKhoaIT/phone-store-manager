@@ -13,6 +13,7 @@ import { FormDialog } from "@/components/FormDialog";
 import { MoneyInput } from "@/components/MoneyInput";
 import { BranchFilter, MonthNav } from "@/components/MonthNav";
 import { StatCard } from "@/components/StatCard";
+import { ReportsTabs } from "@/components/ReportsTabs";
 import { percentChange, profitOf } from "@/lib/profit";
 import { PageHeader } from "@/components/PageHeader";
 import { Pagination } from "@/components/Pagination";
@@ -162,6 +163,8 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
           </FormDialog>
         }
       />
+
+      <ReportsTabs active="pnl" />
 
       {editing && (
         <FormDialog key={editing.id} title="Sửa chi phí" defaultOpen closeHref={backHref}>
