@@ -1,4 +1,3 @@
-import { Smartphone } from "lucide-react";
 import { redirect } from "next/navigation";
 import { prisma } from "@/lib/db";
 import { getSessionUser } from "@/lib/auth";
@@ -14,11 +13,10 @@ export default async function LoginPage() {
   return (
     <div className="flex min-h-screen items-center justify-center p-4">
       <div className="card w-full max-w-sm">
-        <div className="mb-4 flex items-center gap-3">
-          <span className="flex size-10 items-center justify-center rounded-lg bg-[#1677ff] text-white">
-            <Smartphone size={22} aria-hidden />
-          </span>
-          <h1 className="text-xl font-bold">Quản lý cửa hàng</h1>
+        <div className="mb-5">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/logo.png" alt="Tài Khoa Mobile" width={207} height={40} className="h-10 w-auto" />
+          <h1 className="mt-3 text-lg font-semibold text-slate-700">Quản lý cửa hàng</h1>
         </div>
         {firstRun ? (
           <>
