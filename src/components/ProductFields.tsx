@@ -34,6 +34,7 @@ export type ProductFormValue = {
   slug: string | null;
   description: string | null;
   salePrice: number | null;
+  priceOnRequest: boolean;
   featured: boolean;
   sortOrder: number;
   imageUrls: string[];
@@ -265,6 +266,16 @@ export function ProductFields({
                 className="size-4 accent-[#1677ff]"
               />
               Sản phẩm nổi bật
+            </label>
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                name="priceOnRequest"
+                defaultChecked={product?.priceOnRequest ?? false}
+                className="size-4 accent-[#1677ff]"
+              />
+              Web hiện &quot;Liên hệ&quot; thay giá
+              <span className="text-slate-500">(giá thay đổi theo thị trường)</span>
             </label>
             <label className="field">
               <span>Thứ tự hiển thị</span>

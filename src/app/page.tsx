@@ -3,13 +3,14 @@ import { ChevronRight, MapPin } from "lucide-react";
 import { requireUser } from "@/lib/auth";
 import { getAllowedBranches, getCurrentBranch } from "@/lib/branch";
 import { formatDateLong, todayVN } from "@/lib/format";
-import { ADMIN_LINKS, STAFF_LINKS, type NavItem } from "@/lib/nav";
+import { visibleLinks, type NavItem } from "@/lib/nav";
 
 /** Trang chủ: danh sách chức năng dạng app (mở app là thấy ngay các mục). */
 export default async function Home() {
   const user = await requireUser();
   const [allowed, branch] = await Promise.all([getAllowedBranches(user), getCurrentBranch()]);
   const canChange = allowed.length > 1 || !branch;
+  const links = visibleLinks(user);
 
   return (
     <div className="space-y-6">
@@ -31,8 +32,13 @@ export default async function Home() {
         </Link>
       </div>
 
-      <MenuSection items={STAFF_LINKS} />
-      {user.role === "ADMIN" && <MenuSection title="Quản lý" items={ADMIN_LINKS} />}
+      {links.staff.length > 0 && <MenuSection items={links.staff} />}
+      {links.admin.length > 0 && <MenuSection title="Quản lý" items={links.admin} />}
+      {links.staff.length === 0 && links.admin.length === 0 && (
+        <p className="card text-center text-sm text-slate-500">
+          Tài khoản chưa được cấp chức năng nào. Vui lòng liên hệ admin.
+        </p>
+      )}
     </div>
   );
 }

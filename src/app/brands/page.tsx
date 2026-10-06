@@ -1,14 +1,14 @@
 import Link from "next/link";
 import type { Brand } from "@prisma/client";
 import { prisma } from "@/lib/db";
-import { requireAdmin } from "@/lib/auth";
+import { requirePermission } from "@/lib/auth";
 import { saveBrand } from "../actions";
 import { ActionForm } from "@/components/ActionForm";
 import { FormDialog } from "@/components/FormDialog";
 import { PageHeader } from "@/components/PageHeader";
 
 export default async function BrandsPage({ searchParams }: { searchParams: Promise<{ edit?: string }> }) {
-  await requireAdmin();
+  await requirePermission("brands");
   const { edit } = await searchParams;
   const brands = await prisma.brand.findMany({
     orderBy: [{ active: "desc" }, { name: "asc" }],

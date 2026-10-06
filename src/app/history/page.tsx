@@ -2,7 +2,7 @@ import { ChevronLeft, ChevronRight, CircleDot, TriangleAlert } from "lucide-reac
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { prisma } from "@/lib/db";
-import { requireAdmin } from "@/lib/auth";
+import { requirePermission } from "@/lib/auth";
 import { getCurrentBranch } from "@/lib/branch";
 import { summarize } from "@/lib/summary";
 import { addMonths, daysInMonth, formatDateLong, formatMonth, formatVND, isValidMonth, todayVN } from "@/lib/format";
@@ -11,7 +11,7 @@ import { NavInput } from "@/components/NavInput";
 const WEEK_HEADER = ["T2", "T3", "T4", "T5", "T6", "T7", "CN"];
 
 export default async function HistoryPage({ searchParams }: { searchParams: Promise<{ month?: string }> }) {
-  await requireAdmin();
+  await requirePermission("history");
   const today = todayVN();
   const sp = await searchParams;
   const month = sp.month && isValidMonth(sp.month) ? sp.month : today.slice(0, 7);

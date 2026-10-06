@@ -4,15 +4,15 @@ import { notFound, redirect } from "next/navigation";
 import { prisma } from "@/lib/db";
 import { requireUser } from "@/lib/auth";
 import { getCurrentBranch } from "@/lib/branch";
+import { can } from "@/lib/permissions";
 import { getPriceSuggestions } from "@/lib/prices";
 import { summarize } from "@/lib/summary";
 import { getDayChecklist } from "@/lib/checklist";
-import { addDays, formatDateLong, formatTimeVN, formatVND, isValidDate, nowTimeVN, todayVN } from "@/lib/format";
+import { addDays, formatDateLong, formatVND, isValidDate, nowTimeVN, todayVN } from "@/lib/format";
 import { openShift } from "../../actions";
 import { ActionForm } from "@/components/ActionForm";
 import { MoneyInput } from "@/components/MoneyInput";
 import { NavInput } from "@/components/NavInput";
-import { DailyChecklist } from "@/components/DailyChecklist";
 import { FormDialog } from "@/components/FormDialog";
 import { PageHeader } from "@/components/PageHeader";
 import { ShiftCard } from "./ShiftCard";
@@ -23,8 +23,12 @@ export default async function DayPage({ params }: { params: Promise<{ date: stri
 
   const me = await requireUser();
   const isAdmin = me.role === "ADMIN";
+  const canSell = can(me, "sell");
+  const canViewHistory = can(me, "history");
+  if (!canSell && !canViewHistory) redirect("/");
   const today = todayVN();
-  if (!isAdmin && date !== today) redirect(`/day/${today}`);
+  // Nhân viên chỉ làm trong hôm nay; có quyền Lịch sử thì xem được ngày khác (vẫn không sửa được)
+  if (!isAdmin && !canViewHistory && date !== today) redirect(`/day/${today}`);
 
   const branch = await getCurrentBranch();
   if (!branch) redirect("/choose-branch");
@@ -45,20 +49,13 @@ export default async function DayPage({ params }: { params: Promise<{ date: stri
     getPriceSuggestions(),
     getDayChecklist(date, branch.id),
   ]);
-  const checklistItems = checklist.map(({ task, check }) => ({
-    taskId: task.id,
-    title: task.title,
-    description: task.description,
-    doneBy: check ? (check.user.id === me.id ? "Bạn" : check.user.name) : null,
-    doneAt: check ? formatTimeVN(check.doneAt) : null,
-    canToggle: isAdmin || !check || check.user.id === me.id,
-  }));
-  const checklistLeft = checklistItems.filter((i) => !i.doneBy).length;
+  // Checklist nằm ở trang Việc cần làm; ở đây chỉ đếm việc chưa xong để cảnh báo khi chốt ca
+  const checklistLeft = checklist.filter((c) => !c.check).length;
 
   const day = summarize(shifts.flatMap((s) => s.transactions));
   const hasOpenShift = shifts.some((s) => s.userId === me.id && !s.closedAt);
   // Chỉ nhân viên vào ca (admin chỉ xem / quản lý ca của nhân viên)
-  const canOpenShift = !isAdmin && !hasOpenShift && date === today;
+  const canOpenShift = !isAdmin && canSell && !hasOpenShift && date === today;
   const hadShift = shifts.some((s) => s.userId === me.id);
   const bankAccounts = accounts.map((a) => a.bankAccount!).filter(Boolean);
 
@@ -91,7 +88,7 @@ export default async function DayPage({ params }: { params: Promise<{ date: stri
         subtitle={`${branch.name}${date === today ? " · Hôm nay" : ""}`}
         actions={
           <>
-            {isAdmin && (
+            {(isAdmin || canViewHistory) && (
               <div className="flex items-center gap-2">
                 <Link href={`/day/${addDays(date, -1)}`} className="btn-secondary" aria-label="Ngày trước">
                   <ChevronLeft size={16} aria-hidden />
@@ -119,8 +116,6 @@ export default async function DayPage({ params }: { params: Promise<{ date: stri
         <Stat label="Chuyển khoản (CK)" value={formatVND(day.transfer)} />
       </div>
 
-      <DailyChecklist date={date} items={checklistItems} editable={isAdmin || date === today} />
-
       {canOpenShift && !hadShift && (
         <div className="card flex flex-col items-center gap-3 py-8 text-center">
           <span className="flex size-12 items-center justify-center rounded-full bg-blue-50 text-[#1677ff]">
@@ -144,7 +139,7 @@ export default async function DayPage({ params }: { params: Promise<{ date: stri
         <ShiftCard
           key={s.id}
           shift={s}
-          canEdit={!s.closedAt && (isAdmin || (s.userId === me.id && date === today))}
+          canEdit={!s.closedAt && (isAdmin || (canSell && s.userId === me.id && date === today))}
           isAdmin={isAdmin}
           defaultCheckOut={date === today ? nowTimeVN() : "21:00"}
           checklistLeft={checklistLeft}

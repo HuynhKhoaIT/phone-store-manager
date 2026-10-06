@@ -8,6 +8,8 @@ import { prisma } from "@/lib/db";
 import { BRANCH_COOKIE, getAllowedBranches, getCurrentBranch } from "@/lib/branch";
 import { isValidDate, todayVN } from "@/lib/format";
 import { slugify } from "@/lib/slug";
+import { ADMIN_TASKS, periodKey } from "@/lib/admin-tasks";
+import { can, isPermission } from "@/lib/permissions";
 import { RAM_OPTIONS, STORAGE_OPTIONS, isSingleUnit, productLabel } from "@/lib/product-labels";
 import {
   createSession,
@@ -156,6 +158,23 @@ export async function saveUser(fd: FormData): Promise<ActionResult> {
   return {};
 }
 
+/** Lưu quyền của một nhân viên (trang Phân quyền). Admin luôn toàn quyền nên không lưu. */
+export async function saveUserPermissions(fd: FormData): Promise<ActionResult> {
+  const me = await getSessionUser();
+  if (!me || !isAdmin(me)) return NO_PERMISSION;
+
+  const user = await prisma.user.findUnique({ where: { id: Number(str(fd, "id")) || 0 } });
+  if (!user) return { error: "Không tìm thấy tài khoản." };
+  if (user.role === "ADMIN") return { error: "Admin luôn có toàn quyền, không cần phân quyền." };
+  // Chỉ nhận khoá quyền có trong danh sách — bỏ qua giá trị lạ gửi từ form
+  const permissions = [...new Set(fd.getAll("permissions").map(String).filter(isPermission))];
+
+  await prisma.user.update({ where: { id: user.id }, data: { permissions } });
+  revalidateTag(TAGS.users);
+  revalidatePath("/", "layout");
+  return {};
+}
+
 /* ---------------- Chi nhánh (admin) ---------------- */
 
 export async function saveBranch(fd: FormData): Promise<ActionResult> {
@@ -195,6 +214,7 @@ export async function chooseBranch(branchId: number) {
 export async function openShift(fd: FormData): Promise<ActionResult> {
   const me = await getSessionUser();
   if (!me) return NOT_LOGGED_IN;
+  if (!can(me, "sell")) return NO_PERMISSION;
 
   const date = str(fd, "date");
   const branch = await getCurrentBranch();
@@ -224,7 +244,7 @@ async function getEditableShift(me: SessionUser, shiftId: number) {
   const shift = await prisma.shift.findUnique({ where: { id: shiftId } });
   if (!shift) return { error: "Không tìm thấy ca làm việc." } as const;
   if (shift.closedAt) return { error: "Ca này đã kết thúc, không thể chỉnh sửa." } as const;
-  if (!isAdmin(me) && (shift.userId !== me.id || shift.date !== todayVN())) return NO_PERMISSION;
+  if (!isAdmin(me) && (!can(me, "sell") || shift.userId !== me.id || shift.date !== todayVN())) return NO_PERMISSION;
   return { shift } as const;
 }
 
@@ -352,6 +372,7 @@ export async function reopenShift(id: number): Promise<ActionResult> {
 export async function addStockTransfer(fd: FormData): Promise<ActionResult> {
   const me = await getSessionUser();
   if (!me) return NOT_LOGGED_IN;
+  if (!can(me, "products")) return NO_PERMISSION;
 
   const type = str(fd, "type") === "IMPORT" ? "IMPORT" : "TRANSFER";
   const date = str(fd, "date");
@@ -510,6 +531,7 @@ export async function saveProduct(fd: FormData): Promise<ActionResult> {
     slug,
     description: showOnWeb ? optional(fd, "description") : (existing?.description ?? null),
     salePrice,
+    priceOnRequest: showOnWeb && str(fd, "priceOnRequest") === "on",
     featured: showOnWeb && str(fd, "featured") === "on",
     sortOrder,
     imageUrls: showOnWeb ? imageUrls : (existing?.imageUrls ?? []),
@@ -540,11 +562,12 @@ export async function saveRepairPrice(fd: FormData): Promise<ActionResult> {
   const id = Number(str(fd, "id")) || null;
   const service = str(fd, "service");
   const device = str(fd, "device");
-  const price = money(fd, "price");
+  // Để trống giá = giá thay đổi theo linh kiện / thị trường → web hiện "Liên hệ"
+  const price = str(fd, "price") ? money(fd, "price") : 0;
 
   if (!service) return { error: "Vui lòng nhập dịch vụ (VD: Thay pin)." };
   if (!device) return { error: "Vui lòng nhập dòng máy." };
-  if (!Number.isFinite(price) || price <= 0) return { error: "Vui lòng nhập giá." };
+  if (!Number.isFinite(price) || price < 0) return { error: "Giá không hợp lệ." };
 
   const data = { service, device, price, warranty: optional(fd, "warranty"), note: optional(fd, "note") };
   if (id) await prisma.repairPrice.update({ where: { id }, data });
@@ -567,7 +590,7 @@ export async function deleteRepairPrice(id: number): Promise<ActionResult> {
 
 export async function saveChecklistTask(fd: FormData): Promise<ActionResult> {
   const me = await getSessionUser();
-  if (!me || !isAdmin(me)) return NO_PERMISSION;
+  if (!me || !can(me, "checklist")) return NO_PERMISSION;
 
   const id = Number(str(fd, "id")) || null;
   const title = str(fd, "title");
@@ -591,7 +614,7 @@ export async function saveChecklistTask(fd: FormData): Promise<ActionResult> {
 
 export async function moveChecklistTask(id: number, direction: -1 | 1): Promise<ActionResult> {
   const me = await getSessionUser();
-  if (!me || !isAdmin(me)) return NO_PERMISSION;
+  if (!me || !can(me, "checklist")) return NO_PERMISSION;
   const tasks = await prisma.checklistTask.findMany({ orderBy: [{ sortOrder: "asc" }, { id: "asc" }] });
   const i = tasks.findIndex((t) => t.id === id);
   const j = i + direction;
@@ -606,7 +629,7 @@ export async function moveChecklistTask(id: number, direction: -1 | 1): Promise<
 
 export async function deleteChecklistTask(id: number): Promise<ActionResult> {
   const me = await getSessionUser();
-  if (!me || !isAdmin(me)) return NO_PERMISSION;
+  if (!me || !can(me, "checklist")) return NO_PERMISSION;
   await prisma.checklistTask.delete({ where: { id } });
   revalidatePath("/checklist");
   return {};
@@ -616,6 +639,7 @@ export async function deleteChecklistTask(id: number): Promise<ActionResult> {
 export async function toggleChecklist(taskId: number, date: string): Promise<ActionResult> {
   const me = await getSessionUser();
   if (!me) return NOT_LOGGED_IN;
+  if (!can(me, "sell")) return NO_PERMISSION;
   if (!isValidDate(date)) return { error: "Ngày không hợp lệ." };
   if (!isAdmin(me) && date !== todayVN()) return { error: "Chỉ được đánh dấu công việc của ngày hôm nay." };
   const branch = await getCurrentBranch();
@@ -631,6 +655,23 @@ export async function toggleChecklist(taskId: number, date: string): Promise<Act
     await prisma.checklistCheck.create({ data: { taskId, date, branchId: branch.id, userId: me.id } });
   }
   revalidatePath(`/day/${date}`);
+  revalidatePath("/tasks");
+  return {};
+}
+
+/** Tick / bỏ tick một việc của chủ quán. Tính chung cả cửa hàng, không theo chi nhánh. */
+export async function toggleAdminTask(taskKey: string, date: string): Promise<ActionResult> {
+  const me = await getSessionUser();
+  if (!me || !isAdmin(me)) return NO_PERMISSION;
+  if (!isValidDate(date)) return { error: "Ngày không hợp lệ." };
+  const task = ADMIN_TASKS.find((t) => t.key === taskKey);
+  if (!task) return { error: "Công việc không tồn tại." };
+
+  const key = { taskKey_period: { taskKey, period: periodKey(task.period, date) } };
+  const existing = await prisma.adminCheck.findUnique({ where: key });
+  if (existing) await prisma.adminCheck.delete({ where: key });
+  else await prisma.adminCheck.create({ data: { ...key.taskKey_period, userName: me.name } });
+  revalidatePath("/tasks");
   return {};
 }
 
@@ -638,7 +679,7 @@ export async function toggleChecklist(taskId: number, date: string): Promise<Act
 
 export async function saveBrand(fd: FormData): Promise<ActionResult> {
   const me = await getSessionUser();
-  if (!me || !isAdmin(me)) return NO_PERMISSION;
+  if (!me || !can(me, "brands")) return NO_PERMISSION;
 
   const id = Number(str(fd, "id")) || null;
   const name = str(fd, "name");
@@ -661,7 +702,7 @@ const POST_CATEGORIES = ["NEWS", "PROMOTION", "GUIDE"];
 
 export async function savePost(fd: FormData): Promise<ActionResult> {
   const me = await getSessionUser();
-  if (!me || !isAdmin(me)) return NO_PERMISSION;
+  if (!me || !can(me, "posts")) return NO_PERMISSION;
 
   const id = Number(str(fd, "id")) || null;
   const title = str(fd, "title");
@@ -719,7 +760,7 @@ export async function savePost(fd: FormData): Promise<ActionResult> {
 
 export async function deletePost(id: number): Promise<ActionResult> {
   const me = await getSessionUser();
-  if (!me || !isAdmin(me)) return NO_PERMISSION;
+  if (!me || !can(me, "posts")) return NO_PERMISSION;
   await prisma.post.delete({ where: { id } });
   revalidateTag(TAGS.posts);
   revalidatePath("/posts");

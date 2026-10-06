@@ -1,11 +1,11 @@
 import Link from "next/link";
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
-import { requireUser } from "@/lib/auth";
+import { requirePermission } from "@/lib/auth";
 import { formatDate, formatVND, KIND_LABEL, todayVN, warrantyEnd } from "@/lib/format";
 
 export default async function WarrantyPage({ searchParams }: { searchParams: Promise<{ q?: string }> }) {
-  const me = await requireUser();
+  const me = await requirePermission("warranty");
   const q = (await searchParams).q?.trim() ?? "";
   const phone = q.replace(/[ .-]/g, "");
 

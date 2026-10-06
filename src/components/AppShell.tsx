@@ -11,13 +11,12 @@ import {
   MapPin,
   PanelLeftClose,
   PanelLeftOpen,
-  Smartphone,
   UserRound,
 } from "lucide-react";
 import { logout } from "@/app/actions";
 import { SIDER_COOKIE } from "@/lib/ui";
 import { Toaster } from "./Toaster";
-import { ADMIN_LINKS, HOME_ITEM, STAFF_LINKS, breadcrumbFor, type NavItem } from "@/lib/nav";
+import { HOME_ITEM, breadcrumbFor, visibleLinks, type NavItem } from "@/lib/nav";
 
 /**
  * Khung giao diện.
@@ -27,6 +26,7 @@ import { ADMIN_LINKS, HOME_ITEM, STAFF_LINKS, breadcrumbFor, type NavItem } from
  */
 export function AppShell({
   isAdmin,
+  permissions,
   userName,
   branchName,
   canChangeBranch,
@@ -34,6 +34,7 @@ export function AppShell({
   children,
 }: {
   isAdmin: boolean;
+  permissions: string[];
   userName: string;
   branchName: string | null;
   canChangeBranch: boolean;
@@ -72,6 +73,7 @@ export function AppShell({
   const crumbs = breadcrumbFor(pathname);
   const title = crumbs.at(-1) ?? HOME_ITEM.label;
   const startNav = () => setNavigating(true);
+  const links = visibleLinks({ role: isAdmin ? "ADMIN" : "STAFF", permissions });
 
   return (
     <div className="min-h-screen bg-[#f5f5f5]">
@@ -84,9 +86,19 @@ export function AppShell({
           collapsed ? "w-20" : "w-52"
         }`}
       >
-        <Link href="/" onClick={() => !isHome && startNav()} className="flex h-16 shrink-0 items-center gap-3 overflow-hidden px-6">
-          <Logo />
-          {!collapsed && <span className="truncate text-base font-semibold text-white">Cửa hàng</span>}
+        <Link
+          href="/"
+          onClick={() => !isHome && startNav()}
+          aria-label="Tài Khoa Mobile — Trang chủ"
+          className={`flex h-16 shrink-0 items-center overflow-hidden ${collapsed ? "justify-center" : "px-5"}`}
+        >
+          {collapsed ? (
+            <LogoMark className="h-8" />
+          ) : (
+            // Bản chữ sáng cho nền tối của sider
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src="/logo-light.png" alt="Tài Khoa Mobile" width={145} height={28} className="h-7 w-auto" />
+          )}
         </Link>
 
         <nav className="flex-1 overflow-x-hidden overflow-y-auto py-2 text-sm">
@@ -97,11 +109,11 @@ export function AppShell({
               collapsed={collapsed}
               onNavigate={startNav}
             />
-            {STAFF_LINKS.map((l) => (
+            {links.staff.map((l) => (
               <SiderLink key={l.href} item={l} active={pathname.startsWith(l.match)} collapsed={collapsed} onNavigate={startNav} />
             ))}
           </ul>
-          {isAdmin && (
+          {links.admin.length > 0 && (
             <>
               {collapsed ? (
                 <hr className="mx-4 my-2 border-white/10" />
@@ -109,7 +121,7 @@ export function AppShell({
                 <p className="px-6 pt-3 pb-1 text-xs text-white/45">Quản lý</p>
               )}
               <ul className="space-y-1 px-2">
-                {ADMIN_LINKS.map((l) => (
+                {links.admin.map((l) => (
                   <SiderLink key={l.href} item={l} active={pathname.startsWith(l.match)} collapsed={collapsed} onNavigate={startNav} />
                 ))}
               </ul>
@@ -155,9 +167,9 @@ export function AppShell({
         <header className="sticky top-0 z-30 flex h-14 shrink-0 items-center gap-1 bg-white px-2 shadow-[0_1px_4px_rgba(0,21,41,0.08)] lg:hidden">
           {isHome ? (
             <>
-              <span className="flex items-center gap-2 px-2">
-                <Logo />
-                <span className="font-semibold">Cửa hàng</span>
+              <span className="flex items-center px-2">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src="/logo.png" alt="Tài Khoa Mobile" width={145} height={28} className="h-7 w-auto" />
               </span>
               <div className="ml-auto">
                 <UserMenu name={userName} isAdmin={isAdmin} pathname={pathname} canChangeBranch={canChangeBranch} />
@@ -180,7 +192,7 @@ export function AppShell({
                 aria-label="Về trang chủ"
                 className="flex size-10 items-center justify-center rounded-full active:bg-slate-100"
               >
-                <Logo />
+                <LogoMark className="h-7" />
               </Link>
             </>
           )}
@@ -191,18 +203,18 @@ export function AppShell({
         </main>
 
         <footer className="hidden px-4 py-6 text-center text-sm text-slate-400 lg:block">
-          Phone Store Manager ©{new Date().getFullYear()} · Quản lý bán hàng điện thoại &amp; phụ kiện
+          Tài Khoa Mobile ©{new Date().getFullYear()} · Quản lý bán hàng điện thoại &amp; phụ kiện
         </footer>
       </div>
     </div>
   );
 }
 
-function Logo() {
+/** Biểu tượng logo (giỏ hàng + điện thoại), nền trong suốt — dùng ở chỗ hẹp. */
+function LogoMark({ className = "" }: { className?: string }) {
   return (
-    <span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-[#1677ff] text-white">
-      <Smartphone size={18} strokeWidth={2} aria-hidden />
-    </span>
+    // eslint-disable-next-line @next/next/no-img-element
+    <img src="/logo-mark.png" alt="" aria-hidden width={32} height={28} className={`w-auto shrink-0 ${className}`} />
   );
 }
 

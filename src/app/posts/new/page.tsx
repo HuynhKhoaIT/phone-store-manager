@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
-import { requireAdmin } from "@/lib/auth";
+import { requirePermission } from "@/lib/auth";
 import { dateTimeLocalVN } from "@/lib/format";
 import { savePost } from "../../actions";
 import { ActionForm } from "@/components/ActionForm";
@@ -8,7 +8,7 @@ import { PageHeader } from "@/components/PageHeader";
 import { PostEditorFields } from "@/components/PostEditorFields";
 
 export default async function NewPostPage() {
-  await requireAdmin();
+  await requirePermission("posts");
   return (
     <div className="space-y-5">
       <PageHeader

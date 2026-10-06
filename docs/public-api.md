@@ -79,6 +79,8 @@ Chi nhánh đang hoạt động, sắp theo `id`:
 { "items": [{ "id": 1, "name": "Chi nhánh 1" }] }
 ```
 
+> **Giá liên hệ:** sản phẩm admin bật "Web hiện Liên hệ thay giá" (`Product.priceOnRequest`) trả `price = finalPrice = 0`, `salePrice = null`, `discountPercent = 0` — giá nội bộ không lộ ra. FE hiện **"Liên hệ"**, không tính vào "Từ ...", xếp cuối khi sắp theo giá. `priceRange` của `/filters` bỏ qua giá 0.
+
 ### `GET /repair-prices`
 
 Bảng giá sửa chữa (không có ghi chú nội bộ), sắp theo dịch vụ rồi dòng máy:
@@ -86,6 +88,8 @@ Bảng giá sửa chữa (không có ghi chú nội bộ), sắp theo dịch v�
 ```json
 { "items": [{ "service": "Thay pin", "device": "iPhone 11", "price": 480000, "warranty": "6 tháng" }] }
 ```
+
+`price = 0`: admin để trống giá (giá thay đổi theo linh kiện / thị trường) → FE hiện **"Liên hệ"**.
 
 ### `GET /posts`
 

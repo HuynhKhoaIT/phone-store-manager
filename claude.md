@@ -39,7 +39,8 @@ Không có migration files: schema được đồng bộ bằng `prisma db push`
 | `/login` | — | Đăng nhập + **chọn chi nhánh làm việc**. Khi DB chưa có user nào, trang này thành form thiết lập lần đầu (tạo admin + chi nhánh đầu tiên) |
 | `/choose-branch` | Tất cả | Đổi chi nhánh làm việc trong phiên |
 | `/` | Tất cả | Trang chủ: lời chào, chi nhánh đang làm, danh sách chức năng dạng ô (kiểu app) |
-| `/day/[date]` (`/day` chuyển về hôm nay) | Tất cả | Trang chính: checklist trong ngày, vào ca (giờ đi làm + tiền nhận đầu ca), nhập giao dịch, chốt ca (giờ ra về + tiền bàn giao, hiện chênh lệch) |
+| `/day/[date]` (`/day` chuyển về hôm nay) | Tất cả | Trang chính: vào ca (giờ đi làm + tiền nhận đầu ca), nhập giao dịch, chốt ca (giờ ra về + tiền bàn giao, hiện chênh lệch; cảnh báo nếu checklist còn việc) |
+| `/tasks` | Tất cả (quyền `sell`) | **Việc cần làm**: nhân viên tick checklist hôm nay của chi nhánh; admin thấy **việc của chủ quán** (Hôm nay / Tuần này / Tháng này), xem lại được ngày khác qua `?date=` |
 | `/products` (Hàng hoá, `/prices` cũ tự chuyển về) | Xem: tất cả · Sửa: admin | Tab **Danh sách hàng hoá**: thống kê (đang bán, đã bán tháng này, giá trị hàng; admin thấy giá trị theo giá nhập + lãi dự kiến) và bảng giá iPhone / Android / Phụ kiện: thương hiệu, RAM/bộ nhớ (điện thoại), mã sản phẩm (IMEI hoặc mã vạch), pin % (iPhone), mới/cũ, bảo hành mặc định, trạng thái Đang bán / Đã bán (tại chi nhánh nào) / Ngừng bán. Admin thấy giá nhập + lãi |
 | `/posts`, `/posts/new`, `/posts/[id]` | Admin | **Tin tức** cho web: danh sách (Đã đăng / Hẹn giờ / Nháp, chuyên mục, tìm kiếm), trang soạn bài riêng (Markdown + Xem trước, chuyên mục Tin tức / Khuyến mãi / Mẹo hay, ảnh bìa, tóm tắt, ngày đăng — tương lai = hẹn giờ, nổi bật) |
 | `/api/public/*` | Công khai (không đăng nhập) | API chỉ đọc cho web bán hàng (repo FE riêng `phone-store-shop`): `products`, `products/:slug`, `filters`, `branches`, `repair-prices`, `posts`, `posts/:slug`. Tài liệu: **`docs/public-api.md`**. **Không đổi tên trường / shape** — FE đang dùng |
@@ -51,7 +52,8 @@ Không có migration files: schema được đồng bộ bằng `prisma db push`
 | `/dashboard` | Admin | Doanh thu tháng, so với tháng trước, biểu đồ theo ngày, TM/CK, theo chi nhánh/nhân viên, top sản phẩm |
 | `/history` | Admin | Lịch tháng của chi nhánh hiện tại, đánh dấu ngày lệch tiền / ca chưa chốt |
 | `/checklist` | Admin | Thiết lập việc cần làm hằng ngày (vệ sinh quán, đăng bài TikTok…), sắp xếp, áp dụng theo chi nhánh |
-| `/users` | Admin | Tài khoản nhân viên, quyền, chi nhánh được làm |
+| `/users` | Admin | Tài khoản nhân viên, vai trò (Admin / Nhân viên), chi nhánh được làm |
+| `/permissions` | Admin | **Phân quyền** riêng từng nhân viên: tick chức năng được dùng (xem mục Phân quyền) |
 | `/branches` | Admin | Thêm / đổi tên / ẩn chi nhánh |
 | `/account` | Tất cả | Đổi mật khẩu của mình |
 
@@ -83,6 +85,7 @@ Giao diện (`src/components/AppShell.tsx`, danh sách menu dùng chung ở `src
 
 **Web marketing / API công khai** (`src/lib/public-api.ts`, `src/app/api/public/**`)
 - Chỉ sản phẩm `showOnWeb = true` và `active` mới ra API; máy đã bán chỉ hiện khi `includeSold=1` hoặc mở theo slug.
+- **Giá "Liên hệ"**: `RepairPrice.price = 0` (admin để trống giá) hoặc `Product.priceOnRequest` (ô "Web hiện Liên hệ thay giá") → API trả giá 0, web hiện "Liên hệ". Giá thật của sản phẩm vẫn dùng nội bộ khi bán.
 - `toPublic()` là **chỗ duy nhất** quyết định trường nào được công khai — không trả `costPrice`, `note`, `code` đầy đủ, `soldBranch`. Thêm trường mới vào API thì sửa ở đây, và cân nhắc có nhạy cảm không.
 - `slug` không đặt `@unique` ở DB (để `prisma db push` lúc build Vercel không dừng vì cảnh báo); `saveProduct` tự đảm bảo không trùng (thêm `-2`, `-3`...).
 - Cache bằng tag `prices` → mọi action sửa sản phẩm / thương hiệu / bán máy phải `revalidateTag(TAGS.prices)`.
@@ -98,10 +101,17 @@ Giao diện (`src/components/AppShell.tsx`, danh sách menu dùng chung ở `src
 
 **Checklist** — `ChecklistTask` do admin tạo (`branchId` null = mọi chi nhánh). `ChecklistCheck` duy nhất theo (task, ngày, chi nhánh): mỗi việc tính một lần cho cả chi nhánh trong ngày, ghi lại ai tick và lúc nào. Nhân viên chỉ bỏ tick được việc do chính mình tick. Form chốt ca cảnh báo nếu checklist còn việc chưa xong. Việc đã ẩn vẫn hiện ở những ngày từng được tick.
 
+**Việc của chủ quán** — ở trang `/tasks`, admin không thấy checklist nhân viên mà thấy danh sách **cố định trong code** `src/lib/admin-tasks.ts` (`ADMIN_TASKS`, chia Hôm nay / Tuần này / Tháng này; không thiết lập ở `/checklist`). Tick lưu ở `AdminCheck` theo (`taskKey`, kỳ), tính chung cả cửa hàng, không theo chi nhánh. Đừng đổi `key` của việc đã có (mất lịch sử tick).
+
 **Phân quyền** (`ADMIN` | `STAFF`)
 - **Chỉ nhân viên vào ca.** Admin không có ca; admin xem và quản lý ca của nhân viên (thêm giao dịch vào ca đang mở, mở lại ca đã chốt).
 - **Chỉ admin được xoá giao dịch** (`deleteTransaction`); nhân viên nhập sai thì báo admin.
-- Nhân viên chỉ thao tác trên **ngày hôm nay**, chỉ sửa **ca của mình**, không vào được `/dashboard`, `/history`, `/users`, `/branches`, `/checklist` (bị chuyển về trang chủ).
+- Nhân viên chỉ thao tác trên **ngày hôm nay**, chỉ sửa **ca của mình**.
+- **Quyền riêng từng nhân viên** (`User.permissions`, danh sách khoá trong `src/lib/permissions.ts`, admin sửa ở `/permissions`). Admin bỏ qua, luôn toàn quyền. Mỗi quyền = một mục menu: `sell`, `products`, `repair-prices`, `warranty`, `timesheet` (mặc định bật — giống nhân viên trước khi có phân quyền) và `dashboard`, `history`, `posts`, `checklist`, `brands` (mặc định tắt). Thiếu quyền → menu ẩn, trang chuyển về trang chủ, server action trả lỗi.
+  - Trang: `await requirePermission("key")`; server action: `can(me, "key")`; menu: trường `permission` trong `src/lib/nav.ts` (không đặt = chỉ admin).
+  - `history` cho phép xem `/day/<ngày khác>` (chỉ xem); vào ca / giao dịch / tick checklist cần `sell`.
+  - Luôn chỉ admin: `/users`, `/permissions`, `/branches`, sửa bảng giá & giá sửa chữa, xem giá nhập, xoá giao dịch, mở lại ca, xoá phiếu nhập — tránh nhân viên tự nâng quyền / thấy giá nhập.
+  - Thêm quyền mới: thêm vào `PERMISSIONS`, gắn `permission` cho menu, kiểm tra ở trang + action. Tài khoản cũ không tự có quyền mới.
 - Mọi server action **tự kiểm tra quyền** — không dựa vào việc ẩn nút trên giao diện.
 
 ## Cấu trúc code
@@ -113,7 +123,8 @@ src/app/actions.ts          # TẤT CẢ server actions (mutation) — validate 
 src/app/layout.tsx          # Header: menu, chi nhánh hiện tại, user, đăng xuất
 src/app/<route>/page.tsx    # Server components đọc DB trực tiếp qua prisma
 src/app/day/[date]/ShiftCard.tsx
-src/lib/auth.ts             # Hash mật khẩu (scrypt), cookie session ký HMAC, requireUser/requireAdmin
+src/lib/auth.ts             # Hash mật khẩu (scrypt), cookie session ký HMAC, requireUser/requireAdmin/requirePermission
+src/lib/permissions.ts      # Danh sách quyền nhân viên, can()
 src/lib/branch.ts           # getCurrentBranch, getAllowedBranches, getActiveBranches, getBranches
 src/lib/format.ts           # Tiền, ngày giờ VN, cộng ngày/tháng, warrantyEnd
 src/lib/summary.ts          # summarize(): tổng / bán / sửa / TM / CK / theo tài khoản
@@ -138,7 +149,7 @@ src/components/             # Client components dùng chung
 - **Bảng trên điện thoại tự thành danh sách thẻ** (CSS trong `globals.css`): mỗi `<td>` cần `data-label="..."`, ô tiêu đề của thẻ dùng `data-title`; ô có nhiều phần tử con thì bọc trong một thẻ.
 - Bo góc theo antd 5: ô nhập/nút `rounded-md` (6px), thẻ/popup `rounded-lg` (8px), badge `rounded` (4px). Màu chính `#1677ff`.
 - **Nút xoá / thao tác nhanh**: `<ConfirmButton action={serverAction.bind(null, id)} message="...">`.
-- Trang chỉ cho admin gọi `await requireAdmin()` ở đầu; trang chung gọi `await requireUser()`.
+- Trang chỉ cho admin gọi `await requireAdmin()` ở đầu; trang theo quyền gọi `await requirePermission("key")`; trang chung gọi `await requireUser()`.
 - Giữ class tiện ích trong `globals.css` (`card`, `input`, `field`, `btn-primary`, `btn-secondary`, `table`, `badge`) thay vì lặp chuỗi Tailwind dài.
 - Bảng dài trên mobile: bọc `overflow-x-auto`; trang nhân viên hay xem trên điện thoại (như `/prices`) có thêm dạng thẻ `sm:hidden`.
 - Màu biểu đồ: `--series-sale` (xanh) và `--series-repair` (cam) trong `globals.css`.

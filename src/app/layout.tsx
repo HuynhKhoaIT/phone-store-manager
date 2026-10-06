@@ -7,7 +7,7 @@ import { SIDER_COOKIE } from "@/lib/ui";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Quản lý cửa hàng",
+  title: "Tài Khoa Mobile · Quản lý",
   description: "Quản lý bán hàng cửa hàng điện thoại & phụ kiện",
 };
 
@@ -35,6 +35,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
       <body className="antialiased">
         <AppShell
           isAdmin={user.role === "ADMIN"}
+          permissions={user.permissions}
           userName={user.name}
           branchName={current?.name ?? null}
           canChangeBranch={allowed.length > 1 || !current}

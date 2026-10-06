@@ -1,7 +1,7 @@
 import Link from "next/link";
 import type { Prisma, RepairPrice } from "@prisma/client";
 import { prisma } from "@/lib/db";
-import { requireUser } from "@/lib/auth";
+import { requirePermission } from "@/lib/auth";
 import { formatVND } from "@/lib/format";
 import { deleteRepairPrice, saveRepairPrice } from "../actions";
 import { ActionForm } from "@/components/ActionForm";
@@ -15,7 +15,7 @@ const COMMON_SERVICES = ["Thay pin", "Thay màn hình", "Ép kính", "Thay mặt
 type Search = { service?: string; q?: string; edit?: string };
 
 export default async function RepairPricesPage({ searchParams }: { searchParams: Promise<Search> }) {
-  const me = await requireUser();
+  const me = await requirePermission("repair-prices");
   const isAdmin = me.role === "ADMIN";
   const sp = await searchParams;
   const service = sp.service ?? "";
@@ -78,8 +78,9 @@ export default async function RepairPricesPage({ searchParams }: { searchParams:
         <input name="device" required defaultValue={editing?.device} className="input" placeholder="VD: iPhone 11" />
       </label>
       <label className="field">
-        <span>Giá *</span>
-        <MoneyInput name="price" required defaultValue={editing?.price} />
+        <span>Giá</span>
+        <MoneyInput name="price" defaultValue={editing?.price || undefined} />
+        <small className="text-slate-500">Để trống nếu giá thay đổi theo thị trường: web hiện &quot;Liên hệ&quot;.</small>
       </label>
       <label className="field">
         <span>Bảo hành</span>
@@ -156,7 +157,7 @@ export default async function RepairPricesPage({ searchParams }: { searchParams:
                         {r.device}
                       </td>
                       <td data-label="Giá" className="text-right font-semibold whitespace-nowrap tabular-nums">
-                        {formatVND(r.price)}
+                        {r.price > 0 ? formatVND(r.price) : <span className="text-slate-500">Liên hệ</span>}
                       </td>
                       <td data-label="Bảo hành" className="whitespace-nowrap">
                         {r.warranty ?? "—"}

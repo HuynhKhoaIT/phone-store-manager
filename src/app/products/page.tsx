@@ -1,8 +1,8 @@
 import Link from "next/link";
-import { BatteryMedium, Globe, Headphones, Smartphone, TabletSmartphone } from "lucide-react";
+import { BatteryMedium, Globe, Headphones, Search, Smartphone, TabletSmartphone } from "lucide-react";
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
-import { requireUser } from "@/lib/auth";
+import { requirePermission } from "@/lib/auth";
 import { getActiveBranches } from "@/lib/branch";
 import {
   CATEGORY_LABEL,
@@ -36,7 +36,7 @@ const STATUS_BADGE: Record<ProductStatus, string> = {
 };
 
 export default async function PricesPage({ searchParams }: { searchParams: Promise<Search> }) {
-  const me = await requireUser();
+  const me = await requirePermission("products");
   const isAdmin = me.role === "ADMIN";
   const sp = await searchParams;
   const cat = sp.cat && CATEGORY_LABEL[sp.cat] ? sp.cat : "";
@@ -114,6 +114,7 @@ export default async function PricesPage({ searchParams }: { searchParams: Promi
       <PageHeader
         title="Hàng hoá"
         subtitle="Bảng giá điện thoại, phụ kiện và tình trạng hàng"
+        hideTitleOnMobile
         actions={
           isAdmin && (
             <FormDialog title="Thêm sản phẩm vào bảng giá" triggerLabel="Thêm sản phẩm">
@@ -146,7 +147,22 @@ export default async function PricesPage({ searchParams }: { searchParams: Promi
 
       <ProductsTabs active="list" />
 
-      <div className={`grid grid-cols-2 gap-3 ${isAdmin ? "lg:grid-cols-4" : "lg:grid-cols-3"}`}>
+      {/* Điện thoại: một dải thống kê gọn; máy tính: các thẻ riêng */}
+      <div className="card grid grid-cols-3 divide-x divide-slate-100 p-0 sm:hidden">
+        <MiniStat label="Đang bán" value={String(availableAgg._count)} />
+        <MiniStat label="Bán tháng này" value={String(soldThisMonth)} />
+        <MiniStat label="Giá trị (bán)" value={compactVND(availableAgg._sum.price ?? 0)} />
+        {isAdmin && (
+          <p className="col-span-3 border-t border-slate-100 px-3 py-2 text-xs text-slate-500">
+            Giá nhập <b className="text-slate-700">{compactVND(withCostAgg._sum.costPrice ?? 0)}</b> · Lãi dự kiến{" "}
+            <b className="text-green-700">
+              {compactVND((withCostAgg._sum.price ?? 0) - (withCostAgg._sum.costPrice ?? 0))}
+            </b>{" "}
+            · {withCostAgg._count}/{availableAgg._count} có giá nhập
+          </p>
+        )}
+      </div>
+      <div className={`hidden grid-cols-2 gap-3 sm:grid ${isAdmin ? "lg:grid-cols-4" : "lg:grid-cols-3"}`}>
         <Stat label="Đang bán" value={`${availableAgg._count} sản phẩm`} />
         <Stat label="Đã bán tháng này" value={`${soldThisMonth} sản phẩm`} />
         <Stat label="Giá trị hàng (giá bán)" value={formatVND(availableAgg._sum.price ?? 0)} />
@@ -159,34 +175,20 @@ export default async function PricesPage({ searchParams }: { searchParams: Promi
         )}
       </div>
 
-      {/* Bộ lọc */}
-      <div className="card flex flex-wrap items-center gap-2 p-3 sm:p-3">
-        <Segmented
-          items={statusOptions.map((s) => [s === "AVAILABLE" ? "" : s, STATUS_LABEL[s]])}
-          value={status === "AVAILABLE" ? "" : status}
-          href={(v) => qs({ status: v })}
-        />
-        <Segmented
-          items={[["", "Tất cả"], ...Object.entries(CATEGORY_LABEL)]}
-          value={cat}
-          href={(v) => qs({ cat: v })}
-        />
-        <Segmented
-          items={[
-            ["", "Mới + Cũ"],
-            ["NEW", "Mới"],
-            ["USED", "Cũ 99%"],
-          ]}
-          value={cond}
-          href={(v) => qs({ cond: v })}
-        />
-        <form action="/products" className="flex w-full flex-wrap gap-2">
+      {/* Tìm kiếm + hãng. Điện thoại: dính dưới thanh trên cùng khi cuộn */}
+      <div className="sticky top-14 z-20 -mx-3 bg-[#f5f5f5] px-3 py-2 sm:static sm:mx-0 sm:rounded-lg sm:border sm:border-slate-200/70 sm:bg-white sm:p-3">
+        <form action="/products" className="flex w-full gap-2">
           {cat && <input type="hidden" name="cat" value={cat} />}
           {cond && <input type="hidden" name="cond" value={cond} />}
           {status !== "AVAILABLE" && <input type="hidden" name="status" value={status} />}
           {brands.length > 0 && (
-            <select name="brand" defaultValue={brandId ?? ""} aria-label="Thương hiệu" className="input w-auto">
-              <option value="">Mọi thương hiệu</option>
+            <select
+              name="brand"
+              defaultValue={brandId ?? ""}
+              aria-label="Thương hiệu"
+              className="input order-last w-28 shrink-0 sm:order-first sm:w-auto"
+            >
+              <option value="">Mọi hãng</option>
               {brands.map((b) => (
                 <option key={b.id} value={b.id}>
                   {b.name}
@@ -194,15 +196,29 @@ export default async function PricesPage({ searchParams }: { searchParams: Promi
               ))}
             </select>
           )}
-          <input
-            name="q"
-            defaultValue={q}
-            placeholder="Tìm tên, mã / IMEI, thương hiệu..."
-            className="input min-w-0 flex-1 sm:max-w-sm"
-          />
-          <button className="btn-secondary">Tìm</button>
+          <label className="relative min-w-0 flex-1 sm:max-w-sm">
+            <Search
+              size={16}
+              className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-slate-400"
+              aria-hidden
+            />
+            <input
+              name="q"
+              type="search"
+              defaultValue={q}
+              placeholder="Tìm tên, mã / IMEI..."
+              aria-label="Tìm sản phẩm"
+              className="input pl-9"
+            />
+          </label>
+          <button className="btn-secondary order-last shrink-0" aria-label="Tìm">
+            <Search size={16} className="sm:hidden" aria-hidden />
+            <span className="hidden sm:inline">Tìm</span>
+          </button>
         </form>
       </div>
+
+      <p className="-mt-2 px-1 text-sm text-slate-500 sm:hidden">{products.length} sản phẩm</p>
 
       {/* Điện thoại: dạng thẻ */}
       <div className="space-y-2 sm:hidden">
@@ -210,27 +226,37 @@ export default async function PricesPage({ searchParams }: { searchParams: Promi
           const st = productStatus(p);
           return (
             <div key={p.id} className={`card p-3 ${st === "AVAILABLE" ? "" : "opacity-75"}`}>
-              <div className="flex items-start justify-between gap-3">
+              {/* Badge, ghi chú nằm thẳng cột với tên (không chui xuống dưới icon) để thẻ gọn hơn */}
+              <div className="flex items-start gap-3">
                 <CategoryIcon category={p.category} />
                 <div className="min-w-0 flex-1">
-                  <p className="font-semibold">{p.name}</p>
-                  <p className="text-sm text-slate-600">
-                    {[p.brand?.name, capacityLabel(p), p.variant, CATEGORY_LABEL[p.category]].filter(Boolean).join(" · ")}
+                  <div className="flex items-start justify-between gap-2">
+                    <p className="min-w-0 leading-snug font-semibold">{p.name}</p>
+                    <p className="shrink-0 font-bold text-[#1677ff] tabular-nums">{formatVND(p.price)}</p>
+                  </div>
+                  <p className="mt-0.5 text-sm text-slate-600">
+                    {[p.brand?.name, capacityLabel(p), p.variant, !cat && CATEGORY_LABEL[p.category]]
+                      .filter(Boolean)
+                      .join(" · ")}
                   </p>
                   {p.code && <p className="text-xs text-slate-500 tabular-nums">Mã {p.code}</p>}
+                  {isAdmin && p.costPrice != null && <ProfitLine cost={p.costPrice} price={p.price} />}
+                  <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                    <ConditionBadge condition={p.condition} />
+                    {p.batteryHealth != null && <BatteryBadge value={p.batteryHealth} />}
+                    {p.warrantyMonths > 0 && (
+                      <span className="badge bg-slate-100 text-slate-700">BH {p.warrantyMonths} tháng</span>
+                    )}
+                    {isAdmin && p.showOnWeb && <WebBadge />}
+                    {st !== "AVAILABLE" && (
+                      <StatusBadge status={st} branch={p.soldBranch?.name} soldAt={p.soldAt} today={today} />
+                    )}
+                  </div>
+                  {p.note && <p className="mt-1 text-xs text-slate-500">{p.note}</p>}
                 </div>
-                <p className="shrink-0 text-lg font-bold text-[#1677ff] tabular-nums">{formatVND(p.price)}</p>
               </div>
-              {isAdmin && p.costPrice != null && <ProfitLine cost={p.costPrice} price={p.price} />}
-              <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
-                <ConditionBadge condition={p.condition} />
-                {p.batteryHealth != null && <BatteryBadge value={p.batteryHealth} />}
-                {p.warrantyMonths > 0 && <span className="badge bg-slate-100 text-slate-700">BH {p.warrantyMonths} tháng</span>}
-                {st !== "AVAILABLE" && <StatusBadge status={st} branch={p.soldBranch?.name} soldAt={p.soldAt} today={today} />}
-              </div>
-              {p.note && <p className="mt-1 text-xs text-slate-500">{p.note}</p>}
               {isAdmin && (
-                <div className="mt-2 space-x-4 text-right">
+                <div className="mt-3 flex justify-end gap-5 border-t border-slate-100 pt-2">
                   <Link href={qs({ edit: String(p.id) })} className="text-sm text-[#1677ff]">
                     Sửa
                   </Link>
@@ -340,22 +366,6 @@ export default async function PricesPage({ searchParams }: { searchParams: Promi
   );
 }
 
-function Segmented({ items, value, href }: { items: string[][]; value: string; href: (v: string) => string }) {
-  return (
-    <div className="inline-flex rounded-md bg-white p-0.5 ring-1 ring-slate-200">
-      {items.map(([v, l]) => (
-        <Link
-          key={v}
-          href={href(v)}
-          className={`rounded px-3 py-1.5 text-sm ${value === v ? "bg-[#1677ff] font-medium text-white" : "text-slate-600 hover:text-slate-900"}`}
-        >
-          {l}
-        </Link>
-      ))}
-    </div>
-  );
-}
-
 function ConditionBadge({ condition }: { condition: string }) {
   return (
     <span className={`badge ${condition === "USED" ? "bg-amber-100 text-amber-800" : "bg-green-100 text-green-800"}`}>
@@ -402,6 +412,23 @@ function ProfitLine({ cost, price }: { cost: number; price: number }) {
       <b className={profit >= 0 ? "text-green-700" : "text-red-600"}>{formatVND(profit)}</b>
     </p>
   );
+}
+
+function MiniStat({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="min-w-0 px-3 py-2.5">
+      <p className="truncate text-xs text-slate-500">{label}</p>
+      <p className="mt-0.5 truncate text-base font-semibold tabular-nums">{value}</p>
+    </div>
+  );
+}
+
+/** Tiền rút gọn cho ô hẹp trên điện thoại: 173,8 tr · 1,25 tỷ */
+function compactVND(n: number) {
+  const fmt = (v: number, digits: number) => v.toLocaleString("vi-VN", { maximumFractionDigits: digits });
+  if (Math.abs(n) >= 1e9) return `${fmt(n / 1e9, 2)} tỷ`;
+  if (Math.abs(n) >= 1e6) return `${fmt(n / 1e6, 1)} tr`;
+  return formatVND(n);
 }
 
 function Stat({ label, value, sub }: { label: string; value: string; sub?: string }) {

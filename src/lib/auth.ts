@@ -6,12 +6,13 @@ import { unstable_cache } from "next/cache";
 import { redirect } from "next/navigation";
 import { prisma } from "./db";
 import { CACHE_SECONDS, TAGS } from "./cache";
+import { can, type Permission } from "./permissions";
 
 export const SESSION_COOKIE = "session";
 const SESSION_DAYS = 30;
 
 export type Role = "ADMIN" | "STAFF";
-export type SessionUser = { id: number; name: string; username: string; role: Role };
+export type SessionUser = { id: number; name: string; username: string; role: Role; permissions: string[] };
 
 function secret() {
   const s = process.env.AUTH_SECRET;
@@ -59,7 +60,7 @@ const findSessionUser = unstable_cache(
   (id: number) =>
     prisma.user.findUnique({
       where: { id },
-      select: { id: true, name: true, username: true, role: true, active: true },
+      select: { id: true, name: true, username: true, role: true, permissions: true, active: true },
     }),
   ["session-user"],
   { tags: [TAGS.users], revalidate: CACHE_SECONDS },
@@ -77,7 +78,7 @@ export const getSessionUser = cache(async (): Promise<SessionUser | null> => {
 
   const user = await findSessionUser(Number(id));
   if (!user || !user.active) return null;
-  return { id: user.id, name: user.name, username: user.username, role: user.role as Role };
+  return { id: user.id, name: user.name, username: user.username, role: user.role as Role, permissions: user.permissions };
 });
 
 export async function requireUser() {
@@ -89,5 +90,12 @@ export async function requireUser() {
 export async function requireAdmin() {
   const user = await requireUser();
   if (user.role !== "ADMIN") redirect("/");
+  return user;
+}
+
+/** Trang theo quyền: admin luôn vào được; nhân viên thiếu quyền thì về trang chủ. */
+export async function requirePermission(permission: Permission) {
+  const user = await requireUser();
+  if (!can(user, permission)) redirect("/");
   return user;
 }

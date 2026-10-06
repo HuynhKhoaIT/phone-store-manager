@@ -29,6 +29,9 @@ model User {
   role         String           @default("STAFF") // ADMIN | STAFF
   /// Chi nhánh được phép làm việc; để trống = làm được ở mọi chi nhánh
   branches     Branch[]         @relation("UserBranches")
+  /// Quyền của nhân viên (khoá trong src/lib/permissions.ts); admin bỏ qua, luôn toàn quyền.
+  /// Mặc định = quyền nhân viên có sẵn, để tài khoản cũ giữ nguyên khi thêm cột.
+  permissions  String[]         @default(["sell", "products", "repair-prices", "warranty", "timesheet"])
   active       Boolean          @default(true)
   createdAt    DateTime         @default(now())
   shifts       Shift[]
@@ -130,6 +133,7 @@ model Product {
   slug           String? // đường dẫn web, tự tạo từ tên nếu để trống (không trùng — kiểm tra trong code)
   description    String? // mô tả cho web
   salePrice      Int? // giá khuyến mãi (nhỏ hơn giá bán)
+  priceOnRequest Boolean         @default(false) // web hiện "Liên hệ" thay giá (giá vẫn dùng nội bộ khi bán)
   featured       Boolean         @default(false) // nổi bật trên web
   sortOrder      Int             @default(0) // số nhỏ hiện trước
   imageUrls      String[]        @default([]) // link ảnh, ảnh đầu là ảnh đại diện
@@ -147,7 +151,7 @@ model RepairPrice {
   id        Int      @id @default(autoincrement())
   service   String // VD: Thay pin
   device    String // VD: iPhone 11
-  price     Int
+  price     Int // 0 = chưa có giá cố định, web hiện "Liên hệ"
   warranty  String? // VD: 6 tháng
   note      String?
   updatedAt DateTime @updatedAt
@@ -183,6 +187,17 @@ model ChecklistCheck {
 
   @@unique([taskId, date, branchId])
   @@index([date, branchId])
+}
+
+/// Đánh dấu việc của chủ quán đã làm (danh sách việc cố định trong src/lib/admin-tasks.ts).
+model AdminCheck {
+  id       Int      @id @default(autoincrement())
+  taskKey  String // key trong ADMIN_TASKS
+  period   String // ngày YYYY-MM-DD | tuần W:YYYY-MM-DD (thứ Hai) | tháng YYYY-MM
+  userName String // ai tick — lưu tên để không phải nối bảng User
+  doneAt   DateTime @default(now())
+
+  @@unique([taskKey, period])
 }
 
 /// Thương hiệu sản phẩm (Samsung, Anker, Baseus...) — admin quản lý, chọn khi nhập phụ kiện / Android.

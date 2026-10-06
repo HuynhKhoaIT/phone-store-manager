@@ -2,7 +2,7 @@ import Link from "next/link";
 import { ImageOff, PenLine, Star } from "lucide-react";
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
-import { requireAdmin } from "@/lib/auth";
+import { requirePermission } from "@/lib/auth";
 import { dateTimeLocalVN, formatDate } from "@/lib/format";
 import { POST_CATEGORY_LABEL, POST_STATUS_LABEL, postDisplayStatus, type PostDisplayStatus } from "@/lib/post-labels";
 import { deletePost } from "../actions";
@@ -18,7 +18,7 @@ const STATUS_BADGE: Record<PostDisplayStatus, string> = {
 };
 
 export default async function PostsPage({ searchParams }: { searchParams: Promise<Search> }) {
-  await requireAdmin();
+  await requirePermission("posts");
   const sp = await searchParams;
   const now = new Date();
   const status = (["PUBLISHED", "SCHEDULED", "DRAFT"] as const).find((s) => s === sp.status) ?? "";

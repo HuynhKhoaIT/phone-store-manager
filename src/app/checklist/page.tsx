@@ -2,7 +2,7 @@ import { ChevronDown, ChevronUp, MapPin } from "lucide-react";
 import Link from "next/link";
 import type { ChecklistTask } from "@prisma/client";
 import { prisma } from "@/lib/db";
-import { requireAdmin } from "@/lib/auth";
+import { requirePermission } from "@/lib/auth";
 import { getActiveBranches } from "@/lib/branch";
 import { todayVN } from "@/lib/format";
 import { deleteChecklistTask, moveChecklistTask, saveChecklistTask } from "../actions";
@@ -14,7 +14,7 @@ import { ConfirmButton } from "@/components/ConfirmButton";
 const SUGGESTIONS = ["Chấm công", "Vệ sinh quán", "Kiểm tra hàng hoá", "Tưới cây", "Đăng bài Facebook", "Đăng bài TikTok", "Chốt ngày"];
 
 export default async function ChecklistPage({ searchParams }: { searchParams: Promise<{ edit?: string }> }) {
-  await requireAdmin();
+  await requirePermission("checklist");
   const { edit } = await searchParams;
   const today = todayVN();
   const [tasks, branches, todayChecks] = await Promise.all([

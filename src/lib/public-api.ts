@@ -64,7 +64,9 @@ function maskCode(code: string) {
 }
 
 function toPublic(p: Row): PublicProduct {
-  const finalPrice = p.salePrice != null && p.salePrice < p.price ? p.salePrice : p.price;
+  // Giá liên hệ: không lộ giá nội bộ ra web, trả 0 cho mọi trường giá (FE hiện "Liên hệ")
+  const price = p.priceOnRequest ? 0 : p.price;
+  const finalPrice = p.priceOnRequest ? 0 : p.salePrice != null && p.salePrice < p.price ? p.salePrice : p.price;
   const capacity = capacityLabel(p);
   return {
     id: p.id,
@@ -82,10 +84,10 @@ function toPublic(p: Row): PublicProduct {
     color: p.variant,
     batteryHealth: p.batteryHealth,
     warrantyMonths: p.warrantyMonths,
-    price: p.price,
-    salePrice: finalPrice < p.price ? finalPrice : null,
+    price,
+    salePrice: finalPrice < price ? finalPrice : null,
     finalPrice,
-    discountPercent: finalPrice < p.price ? Math.round(((p.price - finalPrice) / p.price) * 100) : 0,
+    discountPercent: finalPrice < price ? Math.round(((price - finalPrice) / price) * 100) : 0,
     status: p.soldBranchId != null ? "SOLD" : "AVAILABLE",
     featured: p.featured,
     sortOrder: p.sortOrder,
@@ -166,7 +168,7 @@ export function buildFilters(all: PublicProduct[]) {
     }
     return m;
   };
-  const prices = available.map((p) => p.finalPrice);
+  const prices = available.map((p) => p.finalPrice).filter((n) => n > 0); // bỏ giá liên hệ
   return {
     categories: [...count((p) => p.category)].map(([value, total]) => ({
       value,

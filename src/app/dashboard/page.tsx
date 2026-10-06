@@ -1,7 +1,7 @@
 import { ChevronLeft, ChevronRight, TrendingDown, TrendingUp } from "lucide-react";
 import Link from "next/link";
 import { prisma } from "@/lib/db";
-import { requireAdmin } from "@/lib/auth";
+import { requirePermission } from "@/lib/auth";
 import { getBranches } from "@/lib/branch";
 import { summarize } from "@/lib/summary";
 import { addMonths, daysInMonth, formatMonth, formatVND, isValidMonth, todayVN } from "@/lib/format";
@@ -11,7 +11,7 @@ import { DailyRevenueChart, type DailyPoint } from "@/components/DailyRevenueCha
 type Search = { month?: string; branch?: string };
 
 export default async function DashboardPage({ searchParams }: { searchParams: Promise<Search> }) {
-  await requireAdmin();
+  await requirePermission("dashboard");
   const sp = await searchParams;
   const month = sp.month && isValidMonth(sp.month) ? sp.month : todayVN().slice(0, 7);
   const branches = await getBranches();

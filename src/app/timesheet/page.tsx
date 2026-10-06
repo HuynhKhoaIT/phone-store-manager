@@ -1,7 +1,7 @@
 import { ChevronLeft, ChevronRight, MapPin } from "lucide-react";
 import Link from "next/link";
 import { prisma } from "@/lib/db";
-import { requireUser } from "@/lib/auth";
+import { requirePermission } from "@/lib/auth";
 import { addMonths, formatDateLong, formatMonth, isValidMonth, todayVN } from "@/lib/format";
 import { NavInput } from "@/components/NavInput";
 
@@ -22,7 +22,7 @@ function formatHours(min: number) {
 }
 
 export default async function TimesheetPage({ searchParams }: { searchParams: Promise<Search> }) {
-  const me = await requireUser();
+  const me = await requirePermission("timesheet");
   const isAdmin = me.role === "ADMIN";
   const sp = await searchParams;
   const month = sp.month && isValidMonth(sp.month) ? sp.month : todayVN().slice(0, 7);

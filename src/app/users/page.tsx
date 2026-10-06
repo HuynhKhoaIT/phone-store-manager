@@ -62,7 +62,7 @@ export default async function UsersPage({ searchParams }: { searchParams: Promis
         <input name="password" type="password" required={!editing} minLength={6} className="input" />
       </label>
       <label className="field">
-        <span>Quyền</span>
+        <span>Vai trò</span>
         <select name="role" defaultValue={editing?.role ?? "STAFF"} className="input">
           <option value="STAFF">Nhân viên</option>
           <option value="ADMIN">Admin</option>
@@ -103,7 +103,7 @@ export default async function UsersPage({ searchParams }: { searchParams: Promis
     <div className="space-y-5">
       <PageHeader
         title="Nhân viên"
-        subtitle="Tài khoản, phân quyền và chi nhánh được làm việc"
+        subtitle="Tài khoản, vai trò và chi nhánh được làm việc"
         actions={
           true && (
             <FormDialog title="Thêm nhân viên" triggerLabel="Thêm nhân viên">
@@ -142,7 +142,7 @@ export default async function UsersPage({ searchParams }: { searchParams: Promis
             <tr>
               <th>Họ tên</th>
               <th>Tên đăng nhập</th>
-              <th>Quyền</th>
+              <th>Vai trò</th>
               <th>Chi nhánh</th>
               <th>Trạng thái</th>
               <th></th>
@@ -158,7 +158,7 @@ export default async function UsersPage({ searchParams }: { searchParams: Promis
                   </span>
                 </td>
                 <td data-label="Tên đăng nhập">{u.username}</td>
-                <td data-label="Quyền">
+                <td data-label="Vai trò">
                   <span
                     className={`badge ${u.role === "ADMIN" ? "bg-amber-100 text-amber-800" : "bg-slate-100 text-slate-700"}`}
                   >
@@ -197,19 +197,13 @@ export default async function UsersPage({ searchParams }: { searchParams: Promis
         </table>
       </div>
 
-      <div className="card text-sm text-slate-600">
-        <p className="mb-1 font-semibold text-slate-800">Phân quyền</p>
-        <ul className="list-disc space-y-1 pl-5">
-          <li>
-            <b>Nhân viên</b>: chọn chi nhánh khi đăng nhập, vào ca và bán hàng trong ngày hôm nay tại chi nhánh đó, chốt
-            ca của mình, xem bảng giá, tra cứu bảo hành, ghi phiếu nhập hàng. Không được xoá giao dịch.
-          </li>
-          <li>
-            <b>Admin</b>: không vào ca; xem và quản lý ca của nhân viên ở mọi chi nhánh, xoá giao dịch, mở lại ca đã
-            chốt, xem lịch sử, dashboard doanh thu, sửa bảng giá, xoá phiếu nhập hàng, quản lý nhân viên và chi nhánh.
-          </li>
-        </ul>
-      </div>
+      <p className="text-sm text-slate-500">
+        Chức năng từng nhân viên được dùng:{" "}
+        <Link href="/permissions" className="text-[#1677ff] hover:underline">
+          Phân quyền
+        </Link>
+        .
+      </p>
     </div>
   );
 }

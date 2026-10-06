@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { LogOut, TriangleAlert } from "lucide-react";
 import type { Shift, Transaction } from "@prisma/client";
 import { summarize } from "@/lib/summary";
@@ -87,7 +88,10 @@ export function ShiftCard({
                 {checklistLeft > 0 && (
                   <p className="rounded-md bg-amber-100 px-3 py-2 text-sm text-amber-800">
                     <TriangleAlert size={16} className="mr-1 inline align-text-bottom" aria-hidden />
-                    Còn {checklistLeft} việc trong checklist hôm nay chưa hoàn thành.
+                    Còn {checklistLeft} việc trong checklist hôm nay chưa hoàn thành.{" "}
+                    <Link href="/tasks" className="font-medium underline">
+                      Xem
+                    </Link>
                   </p>
                 )}
                 <p className="mt-2 text-sm text-slate-600">

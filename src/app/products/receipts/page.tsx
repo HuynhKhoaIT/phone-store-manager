@@ -2,7 +2,7 @@ import Link from "next/link";
 import { ArrowLeftRight, ArrowRight, ChevronLeft, ChevronRight, PackagePlus } from "lucide-react";
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
-import { requireUser } from "@/lib/auth";
+import { requirePermission } from "@/lib/auth";
 import { getActiveBranches, getCurrentBranch } from "@/lib/branch";
 import { productLabel } from "@/lib/product-labels";
 import { addMonths, formatDate, formatMonth, formatVND, isValidMonth, todayVN } from "@/lib/format";
@@ -21,7 +21,7 @@ type Search = { month?: string; type?: string };
 const TYPE_LABEL: Record<string, string> = { IMPORT: "Nhập từ NCC", TRANSFER: "Chuyển chi nhánh" };
 
 export default async function ReceiptsPage({ searchParams }: { searchParams: Promise<Search> }) {
-  const me = await requireUser();
+  const me = await requirePermission("products");
   const isAdmin = me.role === "ADMIN";
   const today = todayVN();
   const sp = await searchParams;
@@ -86,6 +86,7 @@ export default async function ReceiptsPage({ searchParams }: { searchParams: Pro
       <PageHeader
         title="Hàng hoá"
         subtitle="Phiếu nhập hàng từ nhà cung cấp và chuyển hàng giữa chi nhánh"
+        hideTitleOnMobile
         actions={
           <>
             <FormDialog
