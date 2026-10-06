@@ -6,15 +6,25 @@ import { saveBrand } from "../actions";
 import { ActionForm } from "@/components/ActionForm";
 import { FormDialog } from "@/components/FormDialog";
 import { PageHeader } from "@/components/PageHeader";
+import { Pagination } from "@/components/Pagination";
+import { getPaging, pageHref, rowClass } from "@/lib/paging";
 
-export default async function BrandsPage({ searchParams }: { searchParams: Promise<{ edit?: string }> }) {
+export default async function BrandsPage({ searchParams }: { searchParams: Promise<{ edit?: string; page?: string }> }) {
   await requirePermission("brands");
-  const { edit } = await searchParams;
-  const brands = await prisma.brand.findMany({
-    orderBy: [{ active: "desc" }, { name: "asc" }],
-    include: { _count: { select: { products: true } } },
-  });
-  const editing = brands.find((b) => b.id === Number(edit));
+  const { edit, page } = await searchParams;
+  const paging = getPaging(await prisma.brand.count(), page);
+  const [brands, editing] = await Promise.all([
+    prisma.brand.findMany({
+      // id cuối để thứ tự cố định khi trùng tên — phân trang lấy theo `take`
+      orderBy: [{ active: "desc" }, { name: "asc" }, { id: "asc" }],
+      include: { _count: { select: { products: true } } },
+      take: paging.take,
+    }),
+    // Tìm riêng: thương hiệu đang sửa có thể không nằm trong trang đang xem
+    edit ? prisma.brand.findUnique({ where: { id: Number(edit) || 0 } }) : null,
+  ]);
+  const backHref = pageHref("/brands", {})(paging.page);
+  const editHref = (id: number) => `${backHref}${backHref.includes("?") ? "&" : "?"}edit=${id}`;
 
   const renderForm = (editing?: Brand) => (
     <ActionForm
@@ -51,7 +61,7 @@ export default async function BrandsPage({ searchParams }: { searchParams: Promi
       />
 
       {editing && (
-        <FormDialog key={editing.id} title={`Sửa: ${editing.name}`} defaultOpen closeHref="/brands">
+        <FormDialog key={editing.id} title={`Sửa: ${editing.name}`} defaultOpen closeHref={backHref}>
           {renderForm(editing)}
         </FormDialog>
       )}
@@ -67,8 +77,8 @@ export default async function BrandsPage({ searchParams }: { searchParams: Promi
             </tr>
           </thead>
           <tbody>
-            {brands.map((b) => (
-              <tr key={b.id} className={b.active ? "" : "text-slate-400"}>
+            {brands.map((b, i) => (
+              <tr key={b.id} className={`${b.active ? "" : "text-slate-400"} ${rowClass(paging, i)}`}>
                 <td data-title className="font-medium">
                   {b.name}
                 </td>
@@ -83,7 +93,7 @@ export default async function BrandsPage({ searchParams }: { searchParams: Promi
                   </span>
                 </td>
                 <td className="text-right">
-                  <Link href={`/brands?edit=${b.id}`} className="text-sm text-[#1677ff] hover:underline">
+                  <Link href={editHref(b.id)} className="text-sm text-[#1677ff] hover:underline">
                     Sửa
                   </Link>
                 </td>
@@ -99,6 +109,8 @@ export default async function BrandsPage({ searchParams }: { searchParams: Promi
           </tbody>
         </table>
       </div>
+
+      <Pagination paging={paging} href={pageHref("/brands", {})} />
     </div>
   );
 }

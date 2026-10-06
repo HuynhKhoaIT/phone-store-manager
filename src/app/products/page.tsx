@@ -20,8 +20,10 @@ import { ConfirmButton } from "@/components/ConfirmButton";
 import { FormDialog } from "@/components/FormDialog";
 import { PageHeader } from "@/components/PageHeader";
 import { ProductFields } from "@/components/ProductFields";
+import { Pagination } from "@/components/Pagination";
+import { getPaging, pageHref } from "@/lib/paging";
 
-type Search = { cat?: string; q?: string; cond?: string; edit?: string; status?: string; brand?: string };
+type Search = { cat?: string; q?: string; cond?: string; edit?: string; status?: string; brand?: string; page?: string };
 
 const STATUS_WHERE: Record<ProductStatus, Prisma.ProductWhereInput> = {
   AVAILABLE: { active: true, soldBranchId: null },
@@ -67,25 +69,33 @@ export default async function PricesPage({ searchParams }: { searchParams: Promi
       ],
     }),
   };
+  const total = await prisma.product.count({ where });
+  const paging = getPaging(total, sp.page);
   const [products, editing] = await Promise.all([
+    // Lấy từ đầu tới hết trang hiện tại (điện thoại cộng dồn); thêm id để thứ tự cố định giữa các trang
     prisma.product.findMany({
       where,
       include: { brand: { select: { name: true } }, soldBranch: { select: { name: true } } },
-      orderBy: status === "SOLD" ? [{ soldAt: "desc" }] : [{ category: "asc" }, { name: "asc" }, { price: "asc" }],
+      orderBy:
+        status === "SOLD"
+          ? [{ soldAt: "desc" }, { id: "desc" }]
+          : [{ category: "asc" }, { name: "asc" }, { price: "asc" }, { id: "asc" }],
+      take: paging.take,
     }),
     isAdmin && sp.edit ? prisma.product.findUnique({ where: { id: Number(sp.edit) } }) : null,
   ]);
 
+  const filters = {
+    cat,
+    cond,
+    q,
+    status: status === "AVAILABLE" ? "" : status,
+    brand: brandId ? String(brandId) : "",
+  };
+  // Giữ trang hiện tại để đóng hộp sửa vẫn ở đúng trang
   const qs = (patch: Partial<Search>) => {
     const p = new URLSearchParams();
-    const merged = {
-      cat,
-      cond,
-      q,
-      status: status === "AVAILABLE" ? "" : status,
-      brand: brandId ? String(brandId) : "",
-      ...patch,
-    };
+    const merged = { ...filters, page: paging.page > 1 ? String(paging.page) : "", ...patch };
     for (const [k, v] of Object.entries(merged)) if (v) p.set(k, v);
     const s = p.toString();
     return s ? `/products?${s}` : "/products";
@@ -218,7 +228,7 @@ export default async function PricesPage({ searchParams }: { searchParams: Promi
         </form>
       </div>
 
-      <p className="-mt-2 px-1 text-sm text-slate-500 sm:hidden">{products.length} sản phẩm</p>
+      <p className="-mt-2 px-1 text-sm text-slate-500 sm:hidden">{total} sản phẩm</p>
 
       {/* Điện thoại: dạng thẻ */}
       <div className="space-y-2 sm:hidden">
@@ -288,7 +298,8 @@ export default async function PricesPage({ searchParams }: { searchParams: Promi
             </tr>
           </thead>
           <tbody>
-            {products.map((p) => {
+            {/* Máy tính chỉ hiện đúng trang hiện tại */}
+            {products.slice(paging.start).map((p) => {
               const st = productStatus(p);
               return (
                 <tr key={p.id} className={st === "AVAILABLE" ? "" : "text-slate-500"}>
@@ -362,6 +373,8 @@ export default async function PricesPage({ searchParams }: { searchParams: Promi
           </tbody>
         </table>
       </div>
+
+      <Pagination paging={paging} href={pageHref("/products", filters)} />
     </div>
   );
 }

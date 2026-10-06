@@ -7,8 +7,10 @@ import { saveUser } from "../actions";
 import { ActionForm } from "@/components/ActionForm";
 import { FormDialog } from "@/components/FormDialog";
 import { PageHeader } from "@/components/PageHeader";
+import { Pagination } from "@/components/Pagination";
+import { getPaging, pageHref, rowClass } from "@/lib/paging";
 
-type Search = { edit?: string; branch?: string };
+type Search = { edit?: string; branch?: string; page?: string };
 type UserWithBranches = Prisma.UserGetPayload<{ include: { branches: { select: { id: true } } } }>;
 
 export default async function UsersPage({ searchParams }: { searchParams: Promise<Search> }) {
@@ -21,18 +23,22 @@ export default async function UsersPage({ searchParams }: { searchParams: Promis
   const where: Prisma.UserWhereInput = branchFilter
     ? { OR: [{ branches: { some: { id: branchFilter.id } } }, { branches: { none: {} } }] }
     : {};
+  const paging = getPaging(await prisma.user.count({ where }), sp.page);
   const [users, editing] = await Promise.all([
     prisma.user.findMany({
       where,
       include: { branches: { select: { id: true, name: true }, orderBy: { id: "asc" } } },
-      orderBy: [{ active: "desc" }, { role: "asc" }, { name: "asc" }],
+      // id cuối để thứ tự cố định khi trùng tên — phân trang lấy theo `take`
+      orderBy: [{ active: "desc" }, { role: "asc" }, { name: "asc" }, { id: "asc" }],
+      take: paging.take,
     }),
     sp.edit
       ? prisma.user.findUnique({ where: { id: Number(sp.edit) }, include: { branches: { select: { id: true } } } })
       : null,
   ]);
-  const backHref = branchFilter ? `/users?branch=${branchFilter.id}` : "/users";
-  const editHref = (id: number) => `/users?${new URLSearchParams({ ...(branchFilter && { branch: String(branchFilter.id) }), edit: String(id) })}`;
+  // Giữ chi nhánh + trang hiện tại để đóng hộp sửa quay lại đúng chỗ
+  const backHref = pageHref("/users", { branch: branchFilter?.id })(paging.page);
+  const editHref = (id: number) => `${backHref}${backHref.includes("?") ? "&" : "?"}edit=${id}`;
 
   const renderForm = (editing?: UserWithBranches) => (
     <ActionForm
@@ -149,8 +155,8 @@ export default async function UsersPage({ searchParams }: { searchParams: Promis
             </tr>
           </thead>
           <tbody>
-            {users.map((u) => (
-              <tr key={u.id} className={u.active ? "" : "text-slate-400"}>
+            {users.map((u, i) => (
+              <tr key={u.id} className={`${u.active ? "" : "text-slate-400"} ${rowClass(paging, i)}`}>
                 <td data-title className="font-medium">
                   <span>
                     {u.name}
@@ -196,6 +202,8 @@ export default async function UsersPage({ searchParams }: { searchParams: Promis
           </tbody>
         </table>
       </div>
+
+      <Pagination paging={paging} href={pageHref("/users", { branch: branchFilter?.id })} />
 
       <p className="text-sm text-slate-500">
         Chức năng từng nhân viên được dùng:{" "}

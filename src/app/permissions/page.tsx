@@ -6,16 +6,32 @@ import { saveUserPermissions } from "../actions";
 import { ActionForm } from "@/components/ActionForm";
 import { FormDialog } from "@/components/FormDialog";
 import { PageHeader } from "@/components/PageHeader";
+import { Pagination } from "@/components/Pagination";
+import { getPaging, pageHref, rowClass } from "@/lib/paging";
 
-export default async function PermissionsPage({ searchParams }: { searchParams: Promise<{ edit?: string }> }) {
+export default async function PermissionsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ edit?: string; page?: string }>;
+}) {
   const me = await requireAdmin();
-  const { edit } = await searchParams;
-  const users = await prisma.user.findMany({
-    select: { id: true, name: true, username: true, role: true, active: true, permissions: true },
-    orderBy: [{ active: "desc" }, { role: "asc" }, { name: "asc" }],
-  });
+  const { edit, page } = await searchParams;
+  const paging = getPaging(await prisma.user.count(), page);
+  const select = { id: true, name: true, username: true, role: true, active: true, permissions: true } as const;
+  const [users, editTarget] = await Promise.all([
+    prisma.user.findMany({
+      select,
+      // id cuối để thứ tự cố định khi trùng tên — phân trang lấy theo `take`
+      orderBy: [{ active: "desc" }, { role: "asc" }, { name: "asc" }, { id: "asc" }],
+      take: paging.take,
+    }),
+    // Tìm riêng: người đang sửa có thể không nằm trong trang đang xem
+    edit ? prisma.user.findUnique({ where: { id: Number(edit) || 0 }, select }) : null,
+  ]);
   // Admin luôn toàn quyền nên chỉ sửa được quyền của nhân viên
-  const editing = users.find((u) => u.id === Number(edit) && u.role !== "ADMIN");
+  const editing = editTarget?.role !== "ADMIN" ? editTarget : null;
+  const backHref = pageHref("/permissions", {})(paging.page);
+  const editHref = (id: number) => `${backHref}${backHref.includes("?") ? "&" : "?"}edit=${id}`;
 
   return (
     <div className="space-y-5">
@@ -30,7 +46,7 @@ export default async function PermissionsPage({ searchParams }: { searchParams: 
       />
 
       {editing && (
-        <FormDialog key={editing.id} title={`Phân quyền: ${editing.name}`} defaultOpen closeHref="/permissions">
+        <FormDialog key={editing.id} title={`Phân quyền: ${editing.name}`} defaultOpen closeHref={backHref}>
           <ActionForm action={saveUserPermissions} submitLabel="Lưu phân quyền" successMessage="Đã lưu phân quyền.">
             <input type="hidden" name="id" value={editing.id} />
             <div className="space-y-4">
@@ -76,8 +92,8 @@ export default async function PermissionsPage({ searchParams }: { searchParams: 
             </tr>
           </thead>
           <tbody>
-            {users.map((u) => (
-              <tr key={u.id} className={u.active ? "" : "text-slate-400"}>
+            {users.map((u, i) => (
+              <tr key={u.id} className={`${u.active ? "" : "text-slate-400"} ${rowClass(paging, i)}`}>
                 <td data-title className="font-medium">
                   <span>
                     {u.name}
@@ -110,7 +126,7 @@ export default async function PermissionsPage({ searchParams }: { searchParams: 
                 })}
                 <td className="text-right">
                   {u.role !== "ADMIN" && (
-                    <Link href={`/permissions?edit=${u.id}`} className="text-sm text-[#1677ff] hover:underline">
+                    <Link href={editHref(u.id)} className="text-sm text-[#1677ff] hover:underline">
                       Phân quyền
                     </Link>
                   )}
@@ -120,6 +136,8 @@ export default async function PermissionsPage({ searchParams }: { searchParams: 
           </tbody>
         </table>
       </div>
+
+      <Pagination paging={paging} href={pageHref("/permissions", {})} />
 
       <div className="card text-sm text-slate-600">
         <p className="mb-1 font-semibold text-slate-800">Luôn chỉ admin</p>

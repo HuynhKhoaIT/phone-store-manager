@@ -9,10 +9,12 @@ import { FormDialog } from "@/components/FormDialog";
 import { PageHeader } from "@/components/PageHeader";
 import { ConfirmButton } from "@/components/ConfirmButton";
 import { MoneyInput } from "@/components/MoneyInput";
+import { Pagination } from "@/components/Pagination";
+import { getPaging, pageHref, rowClass } from "@/lib/paging";
 
 const COMMON_SERVICES = ["Thay pin", "Thay màn hình", "Ép kính", "Thay mặt lưng", "Thay chân sạc", "Thay camera", "Thay loa"];
 
-type Search = { service?: string; q?: string; edit?: string };
+type Search = { service?: string; q?: string; edit?: string; page?: string };
 
 export default async function RepairPricesPage({ searchParams }: { searchParams: Promise<Search> }) {
   const me = await requirePermission("repair-prices");
@@ -30,20 +32,29 @@ export default async function RepairPricesPage({ searchParams }: { searchParams:
       ],
     }),
   };
+  const paging = getPaging(await prisma.repairPrice.count({ where }), sp.page);
   const [rows, services, editing] = await Promise.all([
-    prisma.repairPrice.findMany({ where, orderBy: [{ service: "asc" }, { device: "asc" }] }),
+    // Phân trang trên danh sách phẳng (đã xếp theo dịch vụ) rồi mới chia nhóm
+    prisma.repairPrice.findMany({
+      where,
+      orderBy: [{ service: "asc" }, { device: "asc" }, { id: "asc" }],
+      take: paging.take,
+    }),
     prisma.repairPrice.findMany({ select: { service: true }, distinct: ["service"], orderBy: { service: "asc" } }),
     isAdmin && sp.edit ? prisma.repairPrice.findUnique({ where: { id: Number(sp.edit) } }) : null,
   ]);
   const serviceNames = services.map((s) => s.service);
   const suggestions = [...new Set([...serviceNames, ...COMMON_SERVICES])];
 
-  const groups = new Map<string, typeof rows>();
-  for (const r of rows) groups.set(r.service, [...(groups.get(r.service) ?? []), r]);
+  // Giữ chỉ số trong danh sách phẳng để biết dòng nào thuộc trang trước (ẩn trên máy tính)
+  const groups = new Map<string, { r: (typeof rows)[number]; i: number }[]>();
+  rows.forEach((r, i) => groups.set(r.service, [...(groups.get(r.service) ?? []), { r, i }]));
 
   const qs = (patch: Partial<Search>) => {
     const p = new URLSearchParams();
-    for (const [k, v] of Object.entries({ service, q, ...patch })) if (v) p.set(k, v);
+    // Giữ trang hiện tại để đóng hộp sửa vẫn ở đúng trang
+    const page = paging.page > 1 ? String(paging.page) : "";
+    for (const [k, v] of Object.entries({ service, q, page, ...patch })) if (v) p.set(k, v);
     const s = p.toString();
     return s ? `/repair-prices?${s}` : "/repair-prices";
   };
@@ -118,7 +129,7 @@ export default async function RepairPricesPage({ searchParams }: { searchParams:
         {["", ...serviceNames].map((s) => (
           <Link
             key={s}
-            href={qs({ service: s })}
+            href={qs({ service: s, page: "" })}
             className={`rounded-md px-3 py-1 text-sm font-medium ring-1 ${
               service === s ? "bg-slate-900 text-white ring-slate-900" : "bg-white text-slate-600 ring-slate-200 hover:text-slate-900"
             }`}
@@ -137,7 +148,11 @@ export default async function RepairPricesPage({ searchParams }: { searchParams:
 
       <div className="grid gap-4 lg:grid-cols-2">
         {[...groups].map(([name, items]) => (
-          <section key={name} className="card p-0 sm:p-0">
+          // Nhóm chỉ gồm dòng của trang trước thì ẩn cả khối trên máy tính
+          <section
+            key={name}
+            className={`card p-0 sm:p-0 ${items.every(({ i }) => i < paging.start) ? "sm:hidden" : ""}`}
+          >
             <h2 className="border-b border-slate-200 px-4 py-3 font-semibold">{name}</h2>
             <div className="overflow-x-auto">
               <table className="table">
@@ -151,8 +166,8 @@ export default async function RepairPricesPage({ searchParams }: { searchParams:
                   </tr>
                 </thead>
                 <tbody>
-                  {items.map((r) => (
-                    <tr key={r.id}>
+                  {items.map(({ r, i }) => (
+                    <tr key={r.id} className={rowClass(paging, i)}>
                       <td data-title className="font-medium">
                         {r.device}
                       </td>
@@ -186,6 +201,8 @@ export default async function RepairPricesPage({ searchParams }: { searchParams:
           </section>
         ))}
       </div>
+
+      <Pagination paging={paging} href={pageHref("/repair-prices", { service, q })} />
     </div>
   );
 }

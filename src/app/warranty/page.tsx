@@ -3,10 +3,13 @@ import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { requirePermission } from "@/lib/auth";
 import { formatDate, formatVND, KIND_LABEL, todayVN, warrantyEnd } from "@/lib/format";
+import { Pagination } from "@/components/Pagination";
+import { getPaging, pageHref, rowClass } from "@/lib/paging";
 
-export default async function WarrantyPage({ searchParams }: { searchParams: Promise<{ q?: string }> }) {
+export default async function WarrantyPage({ searchParams }: { searchParams: Promise<{ q?: string; page?: string }> }) {
   const me = await requirePermission("warranty");
-  const q = (await searchParams).q?.trim() ?? "";
+  const sp = await searchParams;
+  const q = sp.q?.trim() ?? "";
   const phone = q.replace(/[ .-]/g, "");
 
   const where: Prisma.TransactionWhereInput = {
@@ -19,11 +22,14 @@ export default async function WarrantyPage({ searchParams }: { searchParams: Pro
       ],
     }),
   };
+  const total = await prisma.transaction.count({ where });
+  const paging = getPaging(total, sp.page);
   const rows = await prisma.transaction.findMany({
     where,
     include: { shift: { include: { branch: true } } },
-    orderBy: { createdAt: "desc" },
-    take: q ? 200 : 30,
+    // Thêm id để thứ tự cố định khi phân trang bằng take
+    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+    take: paging.take,
   });
   const today = todayVN();
 
@@ -44,7 +50,7 @@ export default async function WarrantyPage({ searchParams }: { searchParams: Pro
       </form>
 
       <p className="text-sm text-slate-500">
-        {q ? `Tìm thấy ${rows.length} sản phẩm có bảo hành.` : "30 sản phẩm bảo hành gần nhất:"}
+        {q ? `Tìm thấy ${total} sản phẩm có bảo hành.` : `${total} sản phẩm có bảo hành, mới nhất trước:`}
       </p>
 
       <div className="card overflow-x-auto p-0 sm:p-0">
@@ -61,11 +67,11 @@ export default async function WarrantyPage({ searchParams }: { searchParams: Pro
             </tr>
           </thead>
           <tbody>
-            {rows.map((t) => {
+            {rows.map((t, i) => {
               const end = warrantyEnd(t.shift.date, t.warrantyMonths);
               const valid = end >= today;
               return (
-                <tr key={t.id}>
+                <tr key={t.id} className={rowClass(paging, i)}>
                   <td data-title>
                     <div>
                       <div className="font-medium">{t.customerName}</div>
@@ -119,6 +125,8 @@ export default async function WarrantyPage({ searchParams }: { searchParams: Pro
           </tbody>
         </table>
       </div>
+
+      <Pagination paging={paging} href={pageHref("/warranty", { q })} />
     </div>
   );
 }

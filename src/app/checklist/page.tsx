@@ -10,12 +10,14 @@ import { ActionForm } from "@/components/ActionForm";
 import { FormDialog } from "@/components/FormDialog";
 import { PageHeader } from "@/components/PageHeader";
 import { ConfirmButton } from "@/components/ConfirmButton";
+import { Pagination } from "@/components/Pagination";
+import { getPaging, pageHref, rowClass } from "@/lib/paging";
 
 const SUGGESTIONS = ["Chấm công", "Vệ sinh quán", "Kiểm tra hàng hoá", "Tưới cây", "Đăng bài Facebook", "Đăng bài TikTok", "Chốt ngày"];
 
-export default async function ChecklistPage({ searchParams }: { searchParams: Promise<{ edit?: string }> }) {
+export default async function ChecklistPage({ searchParams }: { searchParams: Promise<{ edit?: string; page?: string }> }) {
   await requirePermission("checklist");
-  const { edit } = await searchParams;
+  const { edit, page } = await searchParams;
   const today = todayVN();
   const [tasks, branches, todayChecks] = await Promise.all([
     prisma.checklistTask.findMany({
@@ -27,6 +29,11 @@ export default async function ChecklistPage({ searchParams }: { searchParams: Pr
   ]);
   const editing = tasks.find((t) => t.id === Number(edit));
   const existingTitles = new Set(tasks.map((t) => t.title.toLowerCase()));
+  // Lấy đủ danh sách (cần cho tiến độ + nút lên/xuống theo thứ tự chung), chỉ cắt khi hiển thị
+  const paging = getPaging(tasks.length, page);
+  const shownTasks = tasks.slice(0, paging.take);
+  const backHref = pageHref("/checklist", {})(paging.page);
+  const editHref = (id: number) => `${backHref}${backHref.includes("?") ? "&" : "?"}edit=${id}`;
 
   // Tiến độ hôm nay theo chi nhánh
   const progress = branches.map((b) => {
@@ -106,7 +113,7 @@ export default async function ChecklistPage({ searchParams }: { searchParams: Pr
       />
 
       {editing && (
-        <FormDialog key={editing.id} title={`Sửa: ${editing.title}`} defaultOpen closeHref={"/checklist"}>
+        <FormDialog key={editing.id} title={`Sửa: ${editing.title}`} defaultOpen closeHref={backHref}>
           {renderForm(editing)}
         </FormDialog>
       )}
@@ -119,8 +126,11 @@ export default async function ChecklistPage({ searchParams }: { searchParams: Pr
           </p>
         ) : (
           <ul className="divide-y divide-slate-100">
-            {tasks.map((t, i) => (
-              <li key={t.id} className={`flex items-center gap-3 px-4 py-3 ${t.active ? "" : "opacity-50"}`}>
+            {shownTasks.map((t, i) => (
+              <li
+                key={t.id}
+                className={`flex items-center gap-3 px-4 py-3 ${t.active ? "" : "opacity-50"} ${rowClass(paging, i)}`}
+              >
                 <div className="flex flex-col">
                   <ConfirmButton
                     action={moveChecklistTask.bind(null, t.id, -1)}
@@ -151,7 +161,7 @@ export default async function ChecklistPage({ searchParams }: { searchParams: Pr
                     {t.description && ` · ${t.description}`}
                   </p>
                 </div>
-                <Link href={`/checklist?edit=${t.id}`} className="text-sm text-blue-600 hover:underline">
+                <Link href={editHref(t.id)} className="text-sm text-blue-600 hover:underline">
                   Sửa
                 </Link>
                 <ConfirmButton
@@ -165,6 +175,8 @@ export default async function ChecklistPage({ searchParams }: { searchParams: Pr
           </ul>
         )}
       </div>
+
+      <Pagination paging={paging} href={pageHref("/checklist", {})} />
     </div>
   );
 }

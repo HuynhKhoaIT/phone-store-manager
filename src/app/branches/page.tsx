@@ -7,18 +7,27 @@ import { saveBranch } from "../actions";
 import { ActionForm } from "@/components/ActionForm";
 import { FormDialog } from "@/components/FormDialog";
 import { PageHeader } from "@/components/PageHeader";
+import { Pagination } from "@/components/Pagination";
+import { getPaging, pageHref, rowClass } from "@/lib/paging";
 
-export default async function BranchesPage({ searchParams }: { searchParams: Promise<{ edit?: string }> }) {
+export default async function BranchesPage({ searchParams }: { searchParams: Promise<{ edit?: string; page?: string }> }) {
   await requireAdmin();
-  const { edit } = await searchParams;
-  const branches = await prisma.branch.findMany({
-    orderBy: [{ active: "desc" }, { id: "asc" }],
-    include: {
-      staff: { where: { active: true }, select: { id: true, name: true }, orderBy: { name: "asc" } },
-      _count: { select: { shifts: true } },
-    },
-  });
-  const editing = branches.find((b) => b.id === Number(edit));
+  const { edit, page } = await searchParams;
+  const paging = getPaging(await prisma.branch.count(), page);
+  const [branches, editing] = await Promise.all([
+    prisma.branch.findMany({
+      orderBy: [{ active: "desc" }, { id: "asc" }],
+      include: {
+        staff: { where: { active: true }, select: { id: true, name: true }, orderBy: { name: "asc" } },
+        _count: { select: { shifts: true } },
+      },
+      take: paging.take,
+    }),
+    // Tìm riêng: chi nhánh đang sửa có thể không nằm trong trang đang xem
+    edit ? prisma.branch.findUnique({ where: { id: Number(edit) || 0 } }) : null,
+  ]);
+  const backHref = pageHref("/branches", {})(paging.page);
+  const editHref = (id: number) => `${backHref}${backHref.includes("?") ? "&" : "?"}edit=${id}`;
   const unassigned = await prisma.user.findMany({
     where: { active: true, role: "STAFF", branches: { none: {} } },
     select: { name: true },
@@ -64,15 +73,15 @@ export default async function BranchesPage({ searchParams }: { searchParams: Pro
       />
 
       {editing && (
-        <FormDialog key={editing.id} title={`Sửa: ${editing.name}`} defaultOpen closeHref={"/branches"}>
+        <FormDialog key={editing.id} title={`Sửa: ${editing.name}`} defaultOpen closeHref={backHref}>
           {renderForm(editing)}
         </FormDialog>
       )}
 
 
       <div className="grid gap-3 md:grid-cols-2">
-        {branches.map((b) => (
-          <section key={b.id} className={`card ${b.active ? "" : "opacity-60"}`}>
+        {branches.map((b, i) => (
+          <section key={b.id} className={`card ${b.active ? "" : "opacity-60"} ${rowClass(paging, i)}`}>
             <div className="flex items-start justify-between gap-2">
               <div>
                 <h2 className="text-lg font-semibold">
@@ -82,7 +91,7 @@ export default async function BranchesPage({ searchParams }: { searchParams: Pro
                 </h2>
                 <p className="text-sm text-slate-500">{b._count.shifts} ca làm việc đã ghi nhận</p>
               </div>
-              <Link href={`/branches?edit=${b.id}`} className="text-sm text-blue-600 hover:underline">
+              <Link href={editHref(b.id)} className="text-sm text-blue-600 hover:underline">
                 Sửa
               </Link>
             </div>
@@ -100,6 +109,8 @@ export default async function BranchesPage({ searchParams }: { searchParams: Pro
           </section>
         ))}
       </div>
+
+      <Pagination paging={paging} href={pageHref("/branches", {})} />
 
       {unassigned.length > 0 && (
         <p className="text-sm text-slate-500">

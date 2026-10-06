@@ -8,8 +8,10 @@ import { POST_CATEGORY_LABEL, POST_STATUS_LABEL, postDisplayStatus, type PostDis
 import { deletePost } from "../actions";
 import { ConfirmButton } from "@/components/ConfirmButton";
 import { PageHeader } from "@/components/PageHeader";
+import { Pagination } from "@/components/Pagination";
+import { getPaging, pageHref, rowClass } from "@/lib/paging";
 
-type Search = { status?: string; category?: string; q?: string };
+type Search = { status?: string; category?: string; q?: string; page?: string };
 
 const STATUS_BADGE: Record<PostDisplayStatus, string> = {
   PUBLISHED: "bg-green-100 text-green-800",
@@ -35,16 +37,20 @@ export default async function PostsPage({ searchParams }: { searchParams: Promis
     ...(category && { category }),
     ...(q && { title: { contains: q, mode: "insensitive" } }),
   };
-  const [posts, counts] = await Promise.all([
-    prisma.post.findMany({
-      where,
-      include: { author: { select: { name: true } } },
-      orderBy: [{ updatedAt: "desc" }],
-    }),
+  const [total, counts] = await Promise.all([
+    prisma.post.count({ where }),
     Promise.all(
       (["PUBLISHED", "SCHEDULED", "DRAFT"] as const).map((s) => prisma.post.count({ where: statusWhere[s] })),
     ),
   ]);
+  const paging = getPaging(total, sp.page);
+  const posts = await prisma.post.findMany({
+    where,
+    include: { author: { select: { name: true } } },
+    // Thêm id để thứ tự cố định khi phân trang bằng take
+    orderBy: [{ updatedAt: "desc" }, { id: "desc" }],
+    take: paging.take,
+  });
 
   const qs = (patch: Partial<Search>) => {
     const p = new URLSearchParams();
@@ -111,10 +117,10 @@ export default async function PostsPage({ searchParams }: { searchParams: Promis
             </tr>
           </thead>
           <tbody>
-            {posts.map((p) => {
+            {posts.map((p, i) => {
               const st = postDisplayStatus(p, now);
               return (
-                <tr key={p.id}>
+                <tr key={p.id} className={rowClass(paging, i)}>
                   <td data-title>
                     <Link href={`/posts/${p.id}`} className="flex items-center gap-3 hover:text-[#1677ff]">
                       {p.coverImageUrl ? (
@@ -170,6 +176,8 @@ export default async function PostsPage({ searchParams }: { searchParams: Promis
           </tbody>
         </table>
       </div>
+
+      <Pagination paging={paging} href={pageHref("/posts", { status, category, q })} />
     </div>
   );
 }
