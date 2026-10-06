@@ -1,12 +1,12 @@
-import { ChevronLeft, ChevronRight, CircleDot, TriangleAlert } from "lucide-react";
+import { CircleDot, TriangleAlert } from "lucide-react";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { prisma } from "@/lib/db";
 import { requirePermission } from "@/lib/auth";
 import { getCurrentBranch } from "@/lib/branch";
 import { summarize } from "@/lib/summary";
-import { addMonths, daysInMonth, formatDateLong, formatMonth, formatVND, isValidMonth, todayVN } from "@/lib/format";
-import { NavInput } from "@/components/NavInput";
+import { daysInMonth, formatDateLong, formatMonth, formatVND, isValidMonth, todayVN } from "@/lib/format";
+import { MonthNav } from "@/components/MonthNav";
 
 const WEEK_HEADER = ["T2", "T3", "T4", "T5", "T6", "T7", "CN"];
 
@@ -55,13 +55,7 @@ export default async function HistoryPage({ searchParams }: { searchParams: Prom
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <Link href={`/history?month=${addMonths(month, -1)}`} className="btn-secondary" aria-label="Tháng trước">
-            <ChevronLeft size={16} aria-hidden />
-          </Link>
-          <NavInput type="month" value={month} hrefPrefix="/history?month=" label="Chọn tháng" />
-          <Link href={`/history?month=${addMonths(month, 1)}`} className="btn-secondary" aria-label="Tháng sau">
-            <ChevronRight size={16} aria-hidden />
-          </Link>
+          <MonthNav path="/history" month={month} />
         </div>
       </div>
 

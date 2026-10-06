@@ -10,6 +10,7 @@ import { isValidDate, todayVN } from "@/lib/format";
 import { slugify } from "@/lib/slug";
 import { ADMIN_TASKS, periodKey } from "@/lib/admin-tasks";
 import { can, isPermission } from "@/lib/permissions";
+import { EXPENSE_CATEGORIES } from "@/lib/expenses";
 import { RAM_OPTIONS, STORAGE_OPTIONS, isSingleUnit, productLabel } from "@/lib/product-labels";
 import {
   createSession,
@@ -764,5 +765,38 @@ export async function deletePost(id: number): Promise<ActionResult> {
   await prisma.post.delete({ where: { id } });
   revalidateTag(TAGS.posts);
   revalidatePath("/posts");
+  return {};
+}
+
+/* ---------------- Chi phí (admin, trang Báo cáo) ---------------- */
+
+export async function saveExpense(fd: FormData): Promise<ActionResult> {
+  const me = await getSessionUser();
+  if (!me || !isAdmin(me)) return NO_PERMISSION;
+
+  const id = Number(str(fd, "id")) || null;
+  const date = str(fd, "date");
+  const category = str(fd, "category");
+  const amount = money(fd, "amount");
+  const branchId = Number(str(fd, "branchId")) || null;
+
+  if (!isValidDate(date)) return { error: "Ngày không hợp lệ." };
+  if (!EXPENSE_CATEGORIES[category]) return { error: "Vui lòng chọn loại chi phí." };
+  if (!Number.isFinite(amount) || amount <= 0) return { error: "Vui lòng nhập số tiền." };
+  if (branchId && !(await prisma.branch.findUnique({ where: { id: branchId } })))
+    return { error: "Chi nhánh không tồn tại." };
+
+  const data = { date, category, amount, branchId, note: optional(fd, "note") };
+  if (id) await prisma.expense.update({ where: { id }, data });
+  else await prisma.expense.create({ data: { ...data, createdBy: me.name } });
+  revalidatePath("/reports");
+  return {};
+}
+
+export async function deleteExpense(id: number): Promise<ActionResult> {
+  const me = await getSessionUser();
+  if (!me || !isAdmin(me)) return NO_PERMISSION;
+  await prisma.expense.delete({ where: { id } });
+  revalidatePath("/reports");
   return {};
 }

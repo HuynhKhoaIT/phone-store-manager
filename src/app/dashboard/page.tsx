@@ -1,11 +1,13 @@
-import { ChevronLeft, ChevronRight, TrendingDown, TrendingUp } from "lucide-react";
 import Link from "next/link";
 import { prisma } from "@/lib/db";
 import { requirePermission } from "@/lib/auth";
 import { getBranches } from "@/lib/branch";
 import { summarize } from "@/lib/summary";
 import { addMonths, daysInMonth, formatMonth, formatVND, isValidMonth, todayVN } from "@/lib/format";
-import { NavInput } from "@/components/NavInput";
+import { percentChange, profitOf } from "@/lib/profit";
+import { BranchFilter, MonthNav } from "@/components/MonthNav";
+import { PageHeader } from "@/components/PageHeader";
+import { StatCard } from "@/components/StatCard";
 import { DailyRevenueChart, type DailyPoint } from "@/components/DailyRevenueChart";
 
 type Search = { month?: string; branch?: string };
@@ -19,20 +21,21 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
   const prevMonth = addMonths(month, -1);
 
   const shiftFilter = (m: string) => ({ date: { startsWith: m }, ...(branchId && { branchId }) });
-  const [txs, prevTotal] = await Promise.all([
+  const [txs, prevTxs] = await Promise.all([
     prisma.transaction.findMany({
       where: { shift: shiftFilter(month) },
       include: { shift: { select: { date: true, branchId: true, staffName: true } } },
     }),
-    prisma.transaction.aggregate({ where: { shift: shiftFilter(prevMonth) }, _sum: { price: true } }),
+    prisma.transaction.findMany({
+      where: { shift: shiftFilter(prevMonth) },
+      select: { kind: true, price: true, costPrice: true },
+    }),
   ]);
 
   const sum = summarize(txs);
-  // Lợi nhuận: chỉ tính các giao dịch bán từ bảng giá có giá nhập
-  const withCost = txs.filter((t) => t.costPrice != null);
-  const profit = withCost.reduce((s, t) => s + t.price - (t.costPrice ?? 0), 0);
-  const prev = prevTotal._sum.price ?? 0;
-  const growth = prev > 0 ? ((sum.total - prev) / prev) * 100 : null;
+  // Cùng công thức với trang Báo cáo (lib/profit.ts) để hai trang ra cùng một số
+  const cur = profitOf(txs);
+  const prev = profitOf(prevTxs);
 
   const daily: DailyPoint[] = Array.from({ length: daysInMonth(month) }, (_, i) => ({
     date: `${month}-${String(i + 1).padStart(2, "0")}`,
@@ -60,81 +63,35 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
   const topSales = groupBy((t) => (t.kind === "SALE" ? t.productName : "")).filter(([k]) => k).slice(0, 10);
   const topRepairs = groupBy((t) => (t.kind === "REPAIR" ? t.productName : "")).filter(([k]) => k).slice(0, 10);
 
-  const qs = (patch: Search) => {
-    const p = new URLSearchParams();
-    for (const [k, v] of Object.entries({ month, branch: branchId ? String(branchId) : "", ...patch })) if (v) p.set(k, v);
-    return `/dashboard?${p}`;
-  };
-
   return (
     <div className="space-y-5">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <h1 className="text-2xl font-bold">Dashboard — {formatMonth(month)}</h1>
-        <div className="flex flex-wrap items-center gap-2">
-          <form action="/dashboard" className="flex gap-2">
-            <input type="hidden" name="month" value={month} />
-            <select aria-label="Chi nhánh" name="branch" defaultValue={branchId ?? ""} className="input w-auto">
-              <option value="">Tất cả chi nhánh</option>
-              {branches.map((b) => (
-                <option key={b.id} value={b.id}>
-                  {b.name}
-                </option>
-              ))}
-            </select>
-            <button className="btn-secondary">Lọc</button>
-          </form>
-          <Link href={qs({ month: prevMonth })} className="btn-secondary" aria-label="Tháng trước">
-            <ChevronLeft size={16} aria-hidden />
-          </Link>
-          <NavInput
-            type="month"
-            value={month}
-            hrefPrefix="/dashboard?month="
-            hrefSuffix={branchId ? `&branch=${branchId}` : ""}
-            label="Chọn tháng"
-          />
-          <Link href={qs({ month: addMonths(month, 1) })} className="btn-secondary" aria-label="Tháng sau">
-            <ChevronRight size={16} aria-hidden />
-          </Link>
-        </div>
+      <PageHeader title={`Dashboard — ${formatMonth(month)}`} subtitle="Doanh thu theo ngày, chi nhánh, nhân viên, sản phẩm" />
+
+      <div className="flex flex-wrap items-center gap-2">
+        <MonthNav path="/dashboard" month={month} params={{ branch: branchId }} />
+        <BranchFilter path="/dashboard" month={month} branchId={branchId} branches={branches} />
       </div>
 
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
-        <div className="card">
-          <p className="text-xs font-medium text-slate-500">Doanh thu tháng</p>
-          <p className="mt-1 text-2xl font-bold text-blue-700 tabular-nums">{formatVND(sum.total)}</p>
-          <p className="mt-0.5 text-xs text-slate-500">
-            {growth == null ? (
-              "Tháng trước chưa có dữ liệu"
-            ) : (
-              <>
-                <span className={growth >= 0 ? "text-green-700" : "text-red-600"}>
-                  {growth >= 0 ? (
-                    <TrendingUp size={12} className="inline" aria-hidden />
-                  ) : (
-                    <TrendingDown size={12} className="inline" aria-hidden />
-                  )}{" "}
-                  {Math.abs(growth).toLocaleString("vi-VN", { maximumFractionDigits: 1 })}%
-                </span>{" "}
-                so với tháng trước ({formatVND(prev)})
-              </>
-            )}
-          </p>
-        </div>
-        <div className="card">
-          <p className="text-xs font-medium text-slate-500">Lợi nhuận</p>
-          <p className={`mt-1 text-2xl font-bold tabular-nums ${profit >= 0 ? "text-green-700" : "text-red-600"}`}>
-            {formatVND(profit)}
-          </p>
-          <p className="mt-0.5 text-xs text-slate-500">
-            {withCost.length === 0
-              ? "Chưa có giao dịch nào có giá nhập"
-              : `Tính trên ${withCost.length}/${sum.count} giao dịch có giá nhập`}
-          </p>
-        </div>
-        <Tile label="Bán hàng" value={formatVND(sum.sale)} sub={pct(sum.sale, sum.total)} />
-        <Tile label="Sửa chữa" value={formatVND(sum.repair)} sub={pct(sum.repair, sum.total)} />
-        <Tile
+        <StatCard label="Doanh thu" value={formatVND(sum.total)} change={percentChange(cur.revenue, prev.revenue)} />
+        <StatCard
+          label="Lãi gộp"
+          value={formatVND(cur.gross)}
+          amount={cur.gross}
+          profit
+          change={percentChange(cur.gross, prev.gross)}
+          sub={
+            <>
+              {cur.missingCost > 0 && `${cur.missingCost} giao dịch bán chưa có giá nhập · `}
+              <Link href={`/reports?month=${month}${branchId ? `&branch=${branchId}` : ""}`} className="text-[#1677ff] hover:underline">
+                Lãi ròng ở Báo cáo
+              </Link>
+            </>
+          }
+        />
+        <StatCard label="Bán hàng" value={formatVND(sum.sale)} sub={pct(sum.sale, sum.total)} />
+        <StatCard label="Sửa chữa" value={formatVND(sum.repair)} sub={pct(sum.repair, sum.total)} />
+        <StatCard
           label="Số giao dịch"
           value={sum.count.toLocaleString("vi-VN")}
           sub={activeDays ? `TB ${formatVND(Math.round(sum.total / activeDays))}/ngày` : undefined}
@@ -207,16 +164,6 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
 
 function pct(part: number, total: number) {
   return total ? `${((part / total) * 100).toLocaleString("vi-VN", { maximumFractionDigits: 1 })}% doanh thu` : undefined;
-}
-
-function Tile({ label, value, sub }: { label: string; value: string; sub?: string }) {
-  return (
-    <div className="card">
-      <p className="text-xs font-medium text-slate-500">{label}</p>
-      <p className="mt-1 text-lg font-bold tabular-nums">{value}</p>
-      {sub && <p className="mt-0.5 text-xs text-slate-500">{sub}</p>}
-    </div>
-  );
 }
 
 function RankTable({

@@ -50,6 +50,8 @@ Không có migration files: schema được đồng bộ bằng `prisma db push`
 | `/products/receipts` (`/transfers` cũ tự chuyển về) | Tất cả (xoá: admin) | Tab **Phiếu nhập / chuyển**: phiếu *Nhập từ NCC* (nhà cung cấp, chi nhánh nhận; admin nhập giá nhập/cái → tự cập nhật `Product.costPrice`) và phiếu *Chuyển chi nhánh*. Sản phẩm chọn từ danh sách hàng hoá (`ProductPicker`), chưa có trong danh sách thì lưu theo tên gõ. **Chưa theo dõi tồn kho số lượng** |
 | `/timesheet` | Tất cả (admin xem được của người khác) | Chấm công theo tháng: ngày, chi nhánh, giờ vào/ra, tổng giờ |
 | `/dashboard` | Admin | Doanh thu tháng, so với tháng trước, biểu đồ theo ngày, TM/CK, theo chi nhánh/nhân viên, top sản phẩm |
+| `/reports` | Admin | **Báo cáo** lãi lỗ theo tháng: doanh thu − giá vốn (`Transaction.costPrice`) = lãi gộp; − **chi phí** (`Expense`: mặt bằng, lương, điện nước, linh kiện…, theo chi nhánh hoặc chung) = lãi ròng. Theo chi nhánh, 6 tháng gần đây, nhập/sửa/xoá chi phí. Xuất Excel (`/reports/export?type=transactions|expenses&month=`) dạng UTF-16LE + tab — Excel tiếng Việt mở CSV dấu phẩy bị dồn một cột |
+| `/customers`, `/customers/[phone]` | Admin | **Khách hàng**: không có bảng riêng, gom các giao dịch có `customerPhone` (`src/lib/customers.ts`). Danh sách phân trang 20 (`<Pagination>`), tìm SĐT / tên, sắp xếp; chi tiết: lịch sử mua / sửa, bảo hành, nút Gọi / Zalo |
 | `/history` | Admin | Lịch tháng của chi nhánh hiện tại, đánh dấu ngày lệch tiền / ca chưa chốt |
 | `/checklist` | Admin | Thiết lập việc cần làm hằng ngày (vệ sinh quán, đăng bài TikTok…), sắp xếp, áp dụng theo chi nhánh |
 | `/users` | Admin | Tài khoản nhân viên, vai trò (Admin / Nhân viên), chi nhánh được làm |
@@ -148,6 +150,7 @@ src/components/             # Client components dùng chung
 - Mọi trang bắt đầu bằng `<PageHeader title subtitle actions>`.
 - **Bảng trên điện thoại tự thành danh sách thẻ** (CSS trong `globals.css`): mỗi `<td>` cần `data-label="..."`, ô tiêu đề của thẻ dùng `data-title`; ô có nhiều phần tử con thì bọc trong một thẻ.
 - Bo góc theo antd 5: ô nhập/nút `rounded-md` (6px), thẻ/popup `rounded-lg` (8px), badge `rounded` (4px). Màu chính `#1677ff`.
+- **Phân trang mọi bảng / danh sách: 20 dòng** (`src/lib/paging.ts` + `<Pagination>`). Cùng tham số `?page=`: máy tính hiện đúng 20 dòng của trang (dãy số trang), điện thoại hiện cộng dồn và có nút **"Xem thêm"**. Vì vậy lấy dữ liệu từ đầu: `count` → `getPaging(total, sp.page)` → `findMany({ take: paging.take })` (không `skip`), mỗi dòng gắn `rowClass(paging, i)` (ẩn dòng trang trước trên máy tính). `orderBy` phải có `id` làm khoá phụ để thứ tự ổn định. Số liệu thống kê luôn tính trên toàn bộ dữ liệu, không trên trang. Không phân trang: bảng tổng hợp / top 10 / lịch tháng.
 - **Nút xoá / thao tác nhanh**: `<ConfirmButton action={serverAction.bind(null, id)} message="...">`.
 - Trang chỉ cho admin gọi `await requireAdmin()` ở đầu; trang theo quyền gọi `await requirePermission("key")`; trang chung gọi `await requireUser()`.
 - Giữ class tiện ích trong `globals.css` (`card`, `input`, `field`, `btn-primary`, `btn-secondary`, `table`, `badge`) thay vì lặp chuỗi Tailwind dài.

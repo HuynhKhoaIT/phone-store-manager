@@ -19,6 +19,7 @@ model Branch {
   soldProducts  Product[]        @relation("ProductSoldAt")
   transfersFrom StockTransfer[]  @relation("TransferFrom")
   transfersTo   StockTransfer[]  @relation("TransferTo")
+  expenses      Expense[]
 }
 
 model User {
@@ -101,6 +102,21 @@ model StockTransfer {
   staffName    String?
   note         String?
   createdAt    DateTime @default(now())
+
+  @@index([date])
+}
+
+/// Chi phí vận hành (mặt bằng, lương, điện nước...) — trừ vào lãi gộp để ra lãi ròng ở trang Báo cáo.
+model Expense {
+  id        Int      @id @default(autoincrement())
+  date      String // YYYY-MM-DD (giờ Việt Nam) — báo cáo tính theo tháng của ngày này
+  branchId  Int? // null = chi phí chung cả cửa hàng
+  branch    Branch?  @relation(fields: [branchId], references: [id])
+  category  String // khoá trong EXPENSE_CATEGORIES (src/lib/expenses.ts)
+  amount    Int
+  note      String?
+  createdBy String // tên người nhập
+  createdAt DateTime @default(now())
 
   @@index([date])
 }

@@ -1,22 +1,24 @@
 import Link from "next/link";
-import { ArrowLeftRight, ArrowRight, ChevronLeft, ChevronRight, PackagePlus } from "lucide-react";
+import { ArrowLeftRight, ArrowRight, PackagePlus } from "lucide-react";
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { requirePermission } from "@/lib/auth";
 import { getActiveBranches, getCurrentBranch } from "@/lib/branch";
 import { productLabel } from "@/lib/product-labels";
-import { addMonths, formatDate, formatMonth, formatVND, isValidMonth, todayVN } from "@/lib/format";
+import { formatDate, formatMonth, formatVND, isValidMonth, todayVN } from "@/lib/format";
 import { addStockTransfer, deleteStockTransfer } from "../../actions";
 import { ActionForm } from "@/components/ActionForm";
 import { ConfirmButton } from "@/components/ConfirmButton";
 import { FormDialog } from "@/components/FormDialog";
 import { MoneyInput } from "@/components/MoneyInput";
-import { NavInput } from "@/components/NavInput";
+import { MonthNav } from "@/components/MonthNav";
 import { PageHeader } from "@/components/PageHeader";
 import { ProductPicker } from "@/components/ProductPicker";
 import { ProductsTabs } from "@/components/ProductsTabs";
+import { Pagination } from "@/components/Pagination";
+import { getPaging, pageHref, rowClass } from "@/lib/paging";
 
-type Search = { month?: string; type?: string };
+type Search = { month?: string; type?: string; page?: string };
 
 const TYPE_LABEL: Record<string, string> = { IMPORT: "Nhập từ NCC", TRANSFER: "Chuyển chi nhánh" };
 
@@ -29,14 +31,11 @@ export default async function ReceiptsPage({ searchParams }: { searchParams: Pro
   const type = sp.type === "IMPORT" || sp.type === "TRANSFER" ? sp.type : "";
 
   const where: Prisma.StockTransferWhereInput = { date: { startsWith: month }, ...(type && { type }) };
-  const [branches, current, rows, products] = await Promise.all([
+  const [branches, current, all, products] = await Promise.all([
     getActiveBranches(),
     getCurrentBranch(),
-    prisma.stockTransfer.findMany({
-      where,
-      include: { fromBranch: true, toBranch: true },
-      orderBy: [{ date: "desc" }, { createdAt: "desc" }],
-    }),
+    // Bản gọn của cả tháng để tính tổng (không phụ thuộc trang đang xem)
+    prisma.stockTransfer.findMany({ where, select: { type: true, quantity: true, unitCost: true } }),
     // Sản phẩm để chọn khi tạo phiếu (không gửi giá nhập xuống client)
     prisma.product.findMany({
       where: { active: true, soldBranchId: null },
@@ -44,10 +43,17 @@ export default async function ReceiptsPage({ searchParams }: { searchParams: Pro
       orderBy: { name: "asc" },
     }),
   ]);
+  const paging = getPaging(all.length, sp.page);
+  const rows = await prisma.stockTransfer.findMany({
+    where,
+    include: { fromBranch: true, toBranch: true },
+    orderBy: [{ date: "desc" }, { createdAt: "desc" }, { id: "desc" }],
+    take: paging.take,
+  });
   const options = products.map((p) => ({ id: p.id, label: productLabel(p) }));
   const otherBranch = branches.find((b) => b.id !== current?.id);
-  const totalQty = rows.reduce((s, t) => s + t.quantity, 0);
-  const importValue = rows.reduce((s, t) => s + (t.type === "IMPORT" && t.unitCost != null ? t.unitCost * t.quantity : 0), 0);
+  const totalQty = all.reduce((s, t) => s + t.quantity, 0);
+  const importValue = all.reduce((s, t) => s + (t.type === "IMPORT" && t.unitCost != null ? t.unitCost * t.quantity : 0), 0);
 
   const qs = (patch: Partial<Search>) => {
     const p = new URLSearchParams();
@@ -174,24 +180,12 @@ export default async function ReceiptsPage({ searchParams }: { searchParams: Pro
           ))}
         </div>
         <div className="flex items-center gap-2">
-          <Link href={qs({ month: addMonths(month, -1) })} className="btn-secondary" aria-label="Tháng trước">
-            <ChevronLeft size={16} aria-hidden />
-          </Link>
-          <NavInput
-            type="month"
-            value={month}
-            hrefPrefix="/products/receipts?month="
-            hrefSuffix={type ? `&type=${type}` : ""}
-            label="Chọn tháng"
-          />
-          <Link href={qs({ month: addMonths(month, 1) })} className="btn-secondary" aria-label="Tháng sau">
-            <ChevronRight size={16} aria-hidden />
-          </Link>
+          <MonthNav path="/products/receipts" month={month} params={{ type }} />
         </div>
       </div>
 
       <p className="text-sm text-slate-500">
-        {formatMonth(month)} · {rows.length} phiếu · {totalQty} sản phẩm
+        {formatMonth(month)} · {all.length} phiếu · {totalQty} sản phẩm
         {isAdmin && importValue > 0 && <> · Tổng tiền nhập {formatVND(importValue)}</>}
       </p>
 
@@ -211,8 +205,8 @@ export default async function ReceiptsPage({ searchParams }: { searchParams: Pro
             </tr>
           </thead>
           <tbody>
-            {rows.map((t) => (
-              <tr key={t.id}>
+            {rows.map((t, i) => (
+              <tr key={t.id} className={rowClass(paging, i)}>
                 <td data-title className="font-medium">
                   {t.productName}
                 </td>
@@ -273,6 +267,8 @@ export default async function ReceiptsPage({ searchParams }: { searchParams: Pro
           </tbody>
         </table>
       </div>
+
+      <Pagination paging={paging} href={pageHref("/products/receipts", { month, type })} />
     </div>
   );
 }

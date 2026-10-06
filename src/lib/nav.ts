@@ -1,6 +1,8 @@
 import {
   Boxes,
   CalendarDays,
+  ChartColumn,
+  Contact,
   ClipboardCheck,
   Clock,
   House,
@@ -49,6 +51,8 @@ export const STAFF_LINKS: NavItem[] = [
 
 export const ADMIN_LINKS: NavItem[] = [
   { href: "/dashboard", match: "/dashboard", label: "Dashboard", description: "Doanh thu tháng", icon: LayoutDashboard, tone: "bg-violet-500", permission: "dashboard" },
+  { href: "/reports", match: "/reports", label: "Báo cáo", description: "Lãi lỗ, chi phí, xuất Excel", icon: ChartColumn, tone: "bg-emerald-600" },
+  { href: "/customers", match: "/customers", label: "Khách hàng", description: "Lịch sử mua, bảo hành", icon: Contact, tone: "bg-orange-500" },
   { href: "/history", match: "/history", label: "Lịch sử", description: "Xem lại từng ngày", icon: CalendarDays, tone: "bg-sky-600", permission: "history" },
   { href: "/posts", match: "/posts", label: "Tin tức", description: "Bài viết cho web bán hàng", icon: Newspaper, tone: "bg-rose-500", permission: "posts" },
   { href: "/checklist", match: "/checklist", label: "Checklist", description: "Việc cần làm hằng ngày", icon: ListChecks, tone: "bg-green-600", permission: "checklist" },

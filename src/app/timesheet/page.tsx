@@ -1,11 +1,13 @@
-import { ChevronLeft, ChevronRight, MapPin } from "lucide-react";
+import { MapPin } from "lucide-react";
 import Link from "next/link";
 import { prisma } from "@/lib/db";
 import { requirePermission } from "@/lib/auth";
-import { addMonths, formatDateLong, formatMonth, isValidMonth, todayVN } from "@/lib/format";
-import { NavInput } from "@/components/NavInput";
+import { formatDateLong, formatMonth, isValidMonth, todayVN } from "@/lib/format";
+import { MonthNav } from "@/components/MonthNav";
+import { Pagination } from "@/components/Pagination";
+import { getPaging, pageHref, rowClass } from "@/lib/paging";
 
-type Search = { month?: string; user?: string };
+type Search = { month?: string; user?: string; page?: string };
 
 /** Số phút giữa giờ vào và giờ ra (HH:mm); ca qua đêm thì cộng 24h. */
 function workedMinutes(checkIn: string, checkOut: string | null) {
@@ -43,7 +45,7 @@ export default async function TimesheetPage({ searchParams }: { searchParams: Pr
   const shifts = await prisma.shift.findMany({
     where: { userId, date: { startsWith: month } },
     include: { branch: { select: { name: true } } },
-    orderBy: [{ date: "asc" }, { checkIn: "asc" }],
+    orderBy: [{ date: "asc" }, { checkIn: "asc" }, { id: "asc" }],
   });
 
   const rows = shifts.map((s) => ({ ...s, minutes: workedMinutes(s.checkIn, s.checkOut) }));
@@ -56,6 +58,9 @@ export default async function TimesheetPage({ searchParams }: { searchParams: Pr
     b.minutes += r.minutes ?? 0;
     byBranch.set(r.branch.name, b);
   }
+  // Tổng tháng ở trên tính từ mọi ca; chỉ bảng chi tiết là phân trang
+  const paging = getPaging(rows.length, sp.page);
+  const shown = rows.slice(0, paging.take);
 
   const qs = (patch: Search) => {
     const p = new URLSearchParams();
@@ -86,19 +91,7 @@ export default async function TimesheetPage({ searchParams }: { searchParams: Pr
               <button className="btn-secondary">Xem</button>
             </form>
           )}
-          <Link href={qs({ month: addMonths(month, -1) })} className="btn-secondary" aria-label="Tháng trước">
-            <ChevronLeft size={16} aria-hidden />
-          </Link>
-          <NavInput
-            type="month"
-            value={month}
-            hrefPrefix="/timesheet?month="
-            hrefSuffix={userId !== me.id ? `&user=${userId}` : ""}
-            label="Chọn tháng"
-          />
-          <Link href={qs({ month: addMonths(month, 1) })} className="btn-secondary" aria-label="Tháng sau">
-            <ChevronRight size={16} aria-hidden />
-          </Link>
+          <MonthNav path="/timesheet" month={month} params={{ user: userId !== me.id ? userId : "" }} />
         </div>
       </div>
 
@@ -134,8 +127,8 @@ export default async function TimesheetPage({ searchParams }: { searchParams: Pr
             </tr>
           </thead>
           <tbody>
-            {rows.map((r) => (
-              <tr key={r.id}>
+            {shown.map((r, i) => (
+              <tr key={r.id} className={rowClass(paging, i)}>
                 <td data-title className="whitespace-nowrap">
                   {isAdmin ? (
                     <Link href={`/day/${r.date}`} className="text-blue-600 hover:underline">
@@ -179,6 +172,8 @@ export default async function TimesheetPage({ searchParams }: { searchParams: Pr
           )}
         </table>
       </div>
+
+      <Pagination paging={paging} href={pageHref("/timesheet", { month, user: userId !== me.id ? userId : "" })} />
     </div>
   );
 }
