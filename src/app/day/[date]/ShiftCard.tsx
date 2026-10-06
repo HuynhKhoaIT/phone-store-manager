@@ -1,7 +1,8 @@
 import Link from "next/link";
-import { LogOut, TriangleAlert } from "lucide-react";
-import type { Shift, Transaction } from "@prisma/client";
+import { Gift, LogOut, TriangleAlert } from "lucide-react";
+import type { Shift, Transaction, TransactionGift } from "@prisma/client";
 import { summarize } from "@/lib/summary";
+import { profitOf } from "@/lib/profit";
 import { formatTimeVN, formatVND, KIND_LABEL } from "@/lib/format";
 import { addTransaction, closeShift, deleteTransaction, reopenShift } from "../../actions";
 import { ActionForm } from "@/components/ActionForm";
@@ -19,8 +20,9 @@ export function ShiftCard({
   bankAccounts,
   saleSuggestions,
   repairSuggestions,
+  giftOptions,
 }: {
-  shift: Shift & { transactions: Transaction[] };
+  shift: Shift & { transactions: (Transaction & { gifts: TransactionGift[] })[] };
   canEdit: boolean;
   isAdmin: boolean;
   defaultCheckOut: string;
@@ -28,6 +30,7 @@ export function ShiftCard({
   bankAccounts: string[];
   saleSuggestions: PriceSuggestion[];
   repairSuggestions: PriceSuggestion[];
+  giftOptions: PriceSuggestion[];
 }) {
   const sum = summarize(shift.transactions);
   const expectedCash = shift.openingCash + sum.cash;
@@ -35,6 +38,8 @@ export function ShiftCard({
   // Chỉ admin được xoá giao dịch (khi ca còn mở)
   const canDelete = canEdit && isAdmin;
   const diff = (shift.handoverCash ?? 0) - expectedCash;
+  // Lãi chỉ admin xem (giá nhập là dữ liệu nội bộ) — cùng công thức Dashboard / Báo cáo
+  const profit = isAdmin ? profitOf(shift.transactions) : null;
 
   return (
     <section className="card space-y-4">
@@ -75,6 +80,7 @@ export function ShiftCard({
                   bankAccounts={bankAccounts}
                   saleSuggestions={saleSuggestions}
                   repairSuggestions={repairSuggestions}
+                  giftOptions={giftOptions}
                 />
               </ActionForm>
             </FormDialog>
@@ -125,8 +131,21 @@ export function ShiftCard({
         )}
       </div>
 
-      <div className="grid grid-cols-2 gap-x-4 gap-y-1 rounded-lg bg-slate-50 p-3 text-sm sm:grid-cols-4">
+      <div
+        className={`grid grid-cols-2 gap-x-4 gap-y-1 rounded-lg bg-slate-50 p-3 text-sm ${profit ? "sm:grid-cols-5" : "sm:grid-cols-4"}`}
+      >
         <Line label="Doanh thu ca" value={formatVND(sum.total)} />
+        {profit && (
+          <div>
+            <p className="text-xs text-slate-500">Lãi gộp ca</p>
+            <p className={`font-semibold tabular-nums ${profit.gross >= 0 ? "text-green-700" : "text-red-600"}`}>
+              {formatVND(profit.gross)}
+            </p>
+            {profit.missingCost > 0 && (
+              <p className="text-xs text-amber-700">{profit.missingCost} giao dịch chưa có giá nhập</p>
+            )}
+          </div>
+        )}
         <Line label="Tiền mặt" value={formatVND(sum.cash)} />
         <Line label="Chuyển khoản" value={formatVND(sum.transfer)} />
         <Line label="Tiền mặt phải có" value={formatVND(expectedCash)} bold />
@@ -140,8 +159,12 @@ export function ShiftCard({
             <li key={t.id} className="space-y-1.5 p-3">
               <div className="flex items-start justify-between gap-3">
                 <p className="min-w-0 font-medium">{t.productName}</p>
-                <p className="shrink-0 font-semibold tabular-nums">{formatVND(t.price)}</p>
+                <p className="shrink-0 text-right font-semibold tabular-nums">
+                  {formatVND(t.price)}
+                  {isAdmin && <TxProfit tx={t} block />}
+                </p>
               </div>
+              <GiftLine gifts={t.gifts} />
               <div className="flex flex-wrap items-center gap-1.5 text-xs text-slate-500">
                 <span className="tabular-nums">{formatTimeVN(t.createdAt)}</span>
                 <KindBadge kind={t.kind} />
@@ -178,6 +201,7 @@ export function ShiftCard({
                 <th>Loại</th>
                 <th>Sản phẩm / Dịch vụ</th>
                 <th className="text-right">Giá</th>
+                {isAdmin && <th className="text-right">Lãi</th>}
                 <th>TT</th>
                 <th>Bảo hành</th>
                 <th>Khách hàng</th>
@@ -192,8 +216,16 @@ export function ShiftCard({
                   <td>
                     <KindBadge kind={t.kind} />
                   </td>
-                  <td className="font-medium">{t.productName}</td>
+                  <td className="font-medium">
+                    {t.productName}
+                    <GiftLine gifts={t.gifts} />
+                  </td>
                   <td className="text-right font-semibold whitespace-nowrap tabular-nums">{formatVND(t.price)}</td>
+                  {isAdmin && (
+                    <td className="text-right whitespace-nowrap">
+                      <TxProfit tx={t} />
+                    </td>
+                  )}
                   <td className="whitespace-nowrap">
                     <PaymentBadge method={t.paymentMethod} />
                     {t.paymentMethod === "TRANSFER" && <div className="text-xs text-slate-500">{t.bankAccount}</div>}
@@ -282,5 +314,38 @@ function PaymentBadge({ method }: { method: string }) {
     <span className="badge bg-violet-100 text-violet-800">CK</span>
   ) : (
     <span className="badge bg-emerald-100 text-emerald-800">TM</span>
+  );
+}
+
+/** Quà tặng kèm giao dịch (giá 0 đ) */
+function GiftLine({ gifts }: { gifts: TransactionGift[] }) {
+  if (gifts.length === 0) return null;
+  return (
+    <p className="mt-0.5 flex items-start gap-1 text-xs font-normal text-rose-700">
+      <Gift size={12} className="mt-0.5 shrink-0" aria-hidden />
+      <span>Tặng: {gifts.map((g) => (g.quantity > 1 ? `${g.productName} × ${g.quantity}` : g.productName)).join(", ")}</span>
+    </p>
+  );
+}
+
+/**
+ * Lãi một giao dịch = giá bán − giá nhập − giá vốn quà tặng (cùng công thức lib/profit.ts).
+ * Hàng bán chưa có giá nhập thì không tính được → "—". Sửa chữa không có giá vốn (linh kiện ghi ở Chi phí).
+ */
+function TxProfit({ tx, block }: { tx: Transaction; block?: boolean }) {
+  const missing = tx.kind === "SALE" && tx.costPrice == null;
+  const value = tx.price - (tx.costPrice ?? 0) - tx.giftCost;
+  const cls = `text-xs font-medium tabular-nums ${block ? "block" : ""}`;
+  if (missing)
+    return (
+      <span className={`${cls} text-slate-400`} title="Chưa có giá nhập">
+        {block ? "Lãi —" : "—"}
+      </span>
+    );
+  return (
+    <span className={`${cls} ${value >= 0 ? "text-green-700" : "text-red-600"}`}>
+      {block && "Lãi "}
+      {formatVND(value)}
+    </span>
   );
 }

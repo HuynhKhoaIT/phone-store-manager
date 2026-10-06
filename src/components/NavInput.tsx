@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { CalendarDays, ChevronLeft, ChevronRight } from "lucide-react";
+import { DatePicker } from "./DatePicker";
 
 /** Ô chọn ngày / tháng, chọn xong thì chuyển trang. */
 export function NavInput({
@@ -21,16 +22,7 @@ export function NavInput({
   const router = useRouter();
   const go = (v: string) => router.push(`${hrefPrefix}${v}${hrefSuffix}`);
   if (type === "month") return <MonthPicker value={value} onSelect={go} label={label} />;
-  return (
-    <input
-      key={value}
-      type={type}
-      aria-label={label}
-      defaultValue={value}
-      onChange={(e) => e.target.value && go(e.target.value)}
-      className="input w-auto"
-    />
-  );
+  return <DatePicker value={value} onSelect={go} label={label} />;
 }
 
 const PANEL_WIDTH = 256;

@@ -5,13 +5,14 @@ import { prisma } from "@/lib/db";
 import { requireAdmin } from "@/lib/auth";
 import { getActiveBranches, getBranches } from "@/lib/branch";
 import { EXPENSE_CATEGORIES } from "@/lib/expenses";
-import { addMonths, formatDate, formatMonth, formatVND, isValidMonth, todayVN } from "@/lib/format";
+import { addMonths, formatDate, formatMonth, formatVND, todayVN } from "@/lib/format";
+import { getPeriod, inPeriod, periodParams } from "@/lib/period";
 import { deleteExpense, saveExpense } from "../actions";
 import { ActionForm } from "@/components/ActionForm";
 import { ConfirmButton } from "@/components/ConfirmButton";
 import { FormDialog } from "@/components/FormDialog";
 import { MoneyInput } from "@/components/MoneyInput";
-import { BranchFilter, MonthNav } from "@/components/MonthNav";
+import { BranchFilter, DateRangeFilter, MonthNav } from "@/components/MonthNav";
 import { StatCard } from "@/components/StatCard";
 import { ReportsTabs } from "@/components/ReportsTabs";
 import { percentChange, profitOf } from "@/lib/profit";
@@ -19,8 +20,8 @@ import { PageHeader } from "@/components/PageHeader";
 import { Pagination } from "@/components/Pagination";
 import { getPaging, pageHref, rowClass } from "@/lib/paging";
 
-type Search = { month?: string; branch?: string; edit?: string; page?: string };
-type TxRow = { kind: string; price: number; costPrice: number | null };
+type Search = { month?: string; from?: string; to?: string; branch?: string; edit?: string; page?: string };
+type TxRow = { kind: string; price: number; costPrice: number | null; giftCost: number };
 type Pnl = ReturnType<typeof profitOf> & { expenses: number };
 
 const TREND_MONTHS = 6;
@@ -40,16 +41,27 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
   await requireAdmin();
   const sp = await searchParams;
   const today = todayVN();
-  const month = sp.month && isValidMonth(sp.month) ? sp.month : today.slice(0, 7);
+  // Theo tháng (?month=) hoặc từ ngày đến ngày (?from=&to=); bảng 6 tháng lấy theo tháng của ngày cuối
+  const period = getPeriod(sp, today);
+  const keep = periodParams(period);
+  const month = period.month;
   const [branches, activeBranches] = await Promise.all([getBranches(), getActiveBranches()]);
   const branchId = branches.find((b) => b.id === Number(sp.branch))?.id;
   const firstMonth = addMonths(month, -(TREND_MONTHS - 1));
-  const range = { gte: `${firstMonth}-01`, lte: `${month}-31` };
+  // Đủ cho cả bảng 6 tháng lẫn kỳ trước của khoảng ngày (có thể lùi xa hơn 6 tháng)
+  const startDate = [`${firstMonth}-01`, period.prev.from].sort()[0];
+  const range = { gte: startDate, lte: `${month}-31` };
 
   const [txs, expenses] = await Promise.all([
     prisma.transaction.findMany({
       where: { shift: { date: range, ...(branchId && { branchId }) } },
-      select: { kind: true, price: true, costPrice: true, shift: { select: { date: true, branchId: true } } },
+      select: {
+        kind: true,
+        price: true,
+        costPrice: true,
+        giftCost: true,
+        shift: { select: { date: true, branchId: true } },
+      },
     }),
     prisma.expense.findMany({
       where: { date: range },
@@ -61,28 +73,57 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
   const inScope = (e: Expense) => (branchId ? e.branchId === branchId : true);
 
   // Xu hướng theo tháng
-  const expenseByMonth = groupSum(expenses.filter(inScope), (e) => e.date.slice(0, 7), (e) => e.amount);
+  const expenseByMonth = groupSum(
+    expenses.filter(inScope),
+    (e) => e.date.slice(0, 7),
+    (e) => e.amount,
+  );
   const trend = new Map<string, Pnl>();
   for (let i = 0; i < TREND_MONTHS; i++) {
     const m = addMonths(firstMonth, i);
-    trend.set(m, pnl(txs.filter((t) => t.shift.date.startsWith(m)), expenseByMonth.get(m) ?? 0));
+    trend.set(
+      m,
+      pnl(
+        txs.filter((t) => t.shift.date.startsWith(m)),
+        expenseByMonth.get(m) ?? 0,
+      ),
+    );
   }
-  const cur = trend.get(month)!;
-  const prev = trend.get(addMonths(month, -1));
+  // Kỳ đang xem và kỳ trước (tháng trước / cùng số ngày liền trước)
+  const sumExpenses = (r: { from: string; to: string }) =>
+    expenses.filter((e) => inScope(e) && inPeriod(e.date, r)).reduce((s, e) => s + e.amount, 0);
+  const cur = pnl(
+    txs.filter((t) => inPeriod(t.shift.date, period)),
+    sumExpenses(period),
+  );
+  const prev = pnl(
+    txs.filter((t) => inPeriod(t.shift.date, period.prev)),
+    sumExpenses(period.prev),
+  );
 
-  // Tháng đang xem
-  const monthTxs = txs.filter((t) => t.shift.date.startsWith(month));
-  const monthExpenses = expenses.filter((e) => e.date.startsWith(month));
+  const monthTxs = txs.filter((t) => inPeriod(t.shift.date, period));
+  const monthExpenses = expenses.filter((e) => inPeriod(e.date, period));
   const sharedExpense = monthExpenses.filter((e) => e.branchId == null).reduce((s, e) => s + e.amount, 0);
 
-  const expenseByBranch = groupSum(monthExpenses.filter((e) => e.branchId != null), (e) => e.branchId!, (e) => e.amount);
+  const expenseByBranch = groupSum(
+    monthExpenses.filter((e) => e.branchId != null),
+    (e) => e.branchId!,
+    (e) => e.amount,
+  );
   const branchIds = new Set([...monthTxs.map((t) => t.shift.branchId), ...expenseByBranch.keys()]);
   const byBranch = new Map(
-    [...branchIds].map((id) => [id, pnl(monthTxs.filter((t) => t.shift.branchId === id), expenseByBranch.get(id) ?? 0)]),
+    [...branchIds].map((id) => [
+      id,
+      pnl(
+        monthTxs.filter((t) => t.shift.branchId === id),
+        expenseByBranch.get(id) ?? 0,
+      ),
+    ]),
   );
 
   const byCategory = new Map<string, number>();
-  for (const e of monthExpenses.filter(inScope)) byCategory.set(e.category, (byCategory.get(e.category) ?? 0) + e.amount);
+  for (const e of monthExpenses.filter(inScope))
+    byCategory.set(e.category, (byCategory.get(e.category) ?? 0) + e.amount);
 
   // Chỉ phân trang danh sách chi phí; các bảng tổng hợp ở trên vẫn tính trên toàn bộ
   const scopedExpenses = monthExpenses.filter(inScope);
@@ -93,11 +134,13 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
   const editing = monthExpenses.find((e) => e.id === Number(sp.edit));
   const qs = (patch: Search) => {
     const p = new URLSearchParams();
-    for (const [k, v] of Object.entries({ month, branch: branchId ? String(branchId) : "", ...patch })) if (v) p.set(k, v);
+    for (const [k, v] of Object.entries({ ...keep, branch: branchId ? String(branchId) : "", ...patch }))
+      if (v) p.set(k, v);
     return `/reports?${p}`;
   };
   const backHref = qs({ page: curPage });
-  const exportHref = (type: string) => `/reports/export?${new URLSearchParams({ type, month, ...(branchId && { branch: String(branchId) }) })}`;
+  const exportHref = (type: string) =>
+    `/reports/export?${new URLSearchParams({ type, ...keep, ...(branchId && { branch: String(branchId) }) })}`;
 
   const renderForm = (e?: Expense) => (
     <ActionForm
@@ -113,7 +156,7 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
           name="date"
           type="date"
           required
-          defaultValue={e?.date ?? (today.startsWith(month) ? today : `${month}-01`)}
+          defaultValue={e?.date ?? (inPeriod(today, period) ? today : period.from)}
           className="input"
         />
       </label>
@@ -155,8 +198,8 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
   return (
     <div className="space-y-5">
       <PageHeader
-        title={`Báo cáo — ${formatMonth(month)}`}
-        subtitle="Lãi lỗ theo tháng: doanh thu, giá vốn, chi phí vận hành"
+        title={`Báo cáo — ${period.label}`}
+        subtitle="Lãi lỗ theo tháng hoặc khoảng ngày: doanh thu, giá vốn, chi phí vận hành"
         actions={
           <FormDialog title="Thêm chi phí" triggerLabel="Thêm chi phí">
             {renderForm()}
@@ -174,7 +217,8 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
 
       <div className="flex flex-wrap items-center gap-2">
         <MonthNav path="/reports" month={month} params={{ branch: branchId }} />
-        <BranchFilter path="/reports" month={month} branchId={branchId} branches={branches} />
+        <BranchFilter path="/reports" keep={keep} branchId={branchId} branches={branches} />
+        <DateRangeFilter path="/reports" period={period} branchId={branchId} />
         <div className="flex gap-2 sm:ml-auto">
           <a href={exportHref("transactions")} className="btn-secondary">
             <Download size={16} aria-hidden /> Giao dịch
@@ -187,22 +231,41 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
 
       {/* Lãi lỗ tháng */}
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
-        <StatCard label="Doanh thu" value={formatVND(cur.revenue)} change={percentChange(cur.revenue, prev?.revenue)} />
-        <StatCard label="Giá vốn hàng bán" value={formatVND(cur.cogs)} change={percentChange(cur.cogs, prev?.cogs)} inverse />
+        <StatCard
+          label="Doanh thu"
+          value={formatVND(cur.revenue)}
+          change={percentChange(cur.revenue, prev?.revenue)}
+          changeLabel={period.prevLabel}
+        />
+        <StatCard
+          label="Giá vốn hàng bán"
+          value={formatVND(cur.cogs)}
+          change={percentChange(cur.cogs, prev?.cogs)}
+          changeLabel={period.prevLabel}
+          inverse
+        />
         <StatCard
           label="Lãi gộp"
           value={formatVND(gross(cur))}
           amount={gross(cur)}
           profit
           change={percentChange(gross(cur), prev && gross(prev))}
+          changeLabel={period.prevLabel}
         />
-        <StatCard label="Chi phí" value={formatVND(cur.expenses)} change={percentChange(cur.expenses, prev?.expenses)} inverse />
+        <StatCard
+          label="Chi phí"
+          value={formatVND(cur.expenses)}
+          change={percentChange(cur.expenses, prev?.expenses)}
+          changeLabel={period.prevLabel}
+          inverse
+        />
         <StatCard
           label="Lãi ròng"
           value={formatVND(net(cur))}
           amount={net(cur)}
           profit
           change={percentChange(net(cur), prev && net(prev))}
+          changeLabel={period.prevLabel}
         />
       </div>
 
@@ -274,7 +337,7 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
         <section className="card">
           <h2 className="mb-3 font-semibold">Chi phí theo loại</h2>
           {byCategory.size === 0 ? (
-            <p className="text-sm text-slate-500">Chưa có chi phí nào trong tháng.</p>
+            <p className="text-sm text-slate-500">Chưa có chi phí nào trong {period.mode === "month" ? "tháng" : "khoảng ngày"} này.</p>
           ) : (
             <ul className="space-y-2.5">
               {[...byCategory]
@@ -313,9 +376,9 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
           </thead>
           <tbody>
             {[...trend].reverse().map(([m, p]) => (
-              <tr key={m} className={m === month ? "bg-blue-50/50" : ""}>
+              <tr key={m} className={period.mode === "month" && m === month ? "bg-blue-50/50" : ""}>
                 <td data-title>
-                  <Link href={qs({ month: m })} className="hover:text-[#1677ff]">
+                  <Link href={qs({ month: m, from: "", to: "" })} className="hover:text-[#1677ff]">
                     {formatMonth(m)}
                   </Link>
                 </td>
@@ -331,7 +394,7 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
       </section>
 
       <section className="space-y-2">
-        <h2 className="font-semibold">Chi phí trong tháng</h2>
+        <h2 className="font-semibold">Chi phí {period.mode === "month" ? "trong tháng" : "trong khoảng ngày"}</h2>
         <div className="card overflow-x-auto p-0 sm:p-0">
           <table className="table">
             <thead>
@@ -364,7 +427,10 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
                     </span>
                   </td>
                   <td className="space-x-3 text-right whitespace-nowrap">
-                    <Link href={qs({ edit: String(e.id), page: curPage })} className="text-sm text-[#1677ff] hover:underline">
+                    <Link
+                      href={qs({ edit: String(e.id), page: curPage })}
+                      className="text-sm text-[#1677ff] hover:underline"
+                    >
                       Sửa
                     </Link>
                     <ConfirmButton
@@ -386,7 +452,7 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
             </tbody>
           </table>
         </div>
-        <Pagination paging={paging} href={pageHref("/reports", { month, branch: branchId })} />
+        <Pagination paging={paging} href={pageHref("/reports", { ...keep, branch: branchId })} />
       </section>
     </div>
   );

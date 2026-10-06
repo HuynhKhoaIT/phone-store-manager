@@ -13,6 +13,7 @@ export function StatCard({
   profit,
   change,
   inverse,
+  changeLabel = "so với tháng trước",
   sub,
 }: {
   label: string;
@@ -22,6 +23,8 @@ export function StatCard({
   profit?: boolean;
   change?: number | null;
   inverse?: boolean;
+  /** Kỳ đem so sánh, vd "so với 15 ngày trước đó" khi lọc khoảng ngày */
+  changeLabel?: string;
   sub?: ReactNode;
 }) {
   const color = profit && amount != null ? (amount >= 0 ? "text-green-700" : "text-red-600") : "text-slate-900";
@@ -37,7 +40,7 @@ export function StatCard({
             {change >= 0 ? "+" : ""}
             {change.toLocaleString("vi-VN", { maximumFractionDigits: 1 })}%
           </span>{" "}
-          so với tháng trước
+          {changeLabel}
         </p>
       )}
       {sub && <p className="mt-0.5 text-xs text-slate-500">{sub}</p>}

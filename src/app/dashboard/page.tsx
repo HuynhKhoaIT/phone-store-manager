@@ -3,32 +3,37 @@ import { prisma } from "@/lib/db";
 import { requirePermission } from "@/lib/auth";
 import { getBranches } from "@/lib/branch";
 import { summarize } from "@/lib/summary";
-import { addMonths, daysInMonth, formatMonth, formatVND, isValidMonth, todayVN } from "@/lib/format";
+import { formatVND, todayVN } from "@/lib/format";
+import { eachDay, getPeriod, periodParams } from "@/lib/period";
 import { percentChange, profitOf } from "@/lib/profit";
-import { BranchFilter, MonthNav } from "@/components/MonthNav";
+import { BranchFilter, DateRangeFilter, MonthNav } from "@/components/MonthNav";
 import { PageHeader } from "@/components/PageHeader";
 import { StatCard } from "@/components/StatCard";
 import { DailyRevenueChart, type DailyPoint } from "@/components/DailyRevenueChart";
 
-type Search = { month?: string; branch?: string };
+type Search = { month?: string; from?: string; to?: string; branch?: string };
 
 export default async function DashboardPage({ searchParams }: { searchParams: Promise<Search> }) {
   await requirePermission("dashboard");
   const sp = await searchParams;
-  const month = sp.month && isValidMonth(sp.month) ? sp.month : todayVN().slice(0, 7);
+  // Theo tháng (?month=) hoặc từ ngày đến ngày (?from=&to=)
+  const period = getPeriod(sp, todayVN());
+  const keep = periodParams(period);
   const branches = await getBranches();
   const branchId = branches.find((b) => b.id === Number(sp.branch))?.id;
-  const prevMonth = addMonths(month, -1);
 
-  const shiftFilter = (m: string) => ({ date: { startsWith: m }, ...(branchId && { branchId }) });
+  const shiftFilter = (r: { from: string; to: string }) => ({
+    date: { gte: r.from, lte: r.to },
+    ...(branchId && { branchId }),
+  });
   const [txs, prevTxs] = await Promise.all([
     prisma.transaction.findMany({
-      where: { shift: shiftFilter(month) },
+      where: { shift: shiftFilter(period) },
       include: { shift: { select: { date: true, branchId: true, staffName: true } } },
     }),
     prisma.transaction.findMany({
-      where: { shift: shiftFilter(prevMonth) },
-      select: { kind: true, price: true, costPrice: true },
+      where: { shift: shiftFilter(period.prev) },
+      select: { kind: true, price: true, costPrice: true, giftCost: true },
     }),
   ]);
 
@@ -37,13 +42,10 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
   const cur = profitOf(txs);
   const prev = profitOf(prevTxs);
 
-  const daily: DailyPoint[] = Array.from({ length: daysInMonth(month) }, (_, i) => ({
-    date: `${month}-${String(i + 1).padStart(2, "0")}`,
-    sale: 0,
-    repair: 0,
-  }));
+  const daily: DailyPoint[] = eachDay(period.from, period.to).map((date) => ({ date, sale: 0, repair: 0 }));
+  const dayIndex = new Map(daily.map((d, i) => [d.date, i]));
   for (const t of txs) {
-    const d = daily[Number(t.shift.date.slice(8)) - 1];
+    const d = daily[dayIndex.get(t.shift.date)!];
     if (t.kind === "REPAIR") d.repair += t.price;
     else d.sale += t.price;
   }
@@ -60,30 +62,47 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
   };
   const byBranch = groupBy((t) => branches.find((b) => b.id === t.shift.branchId)?.name ?? "?");
   const byStaff = groupBy((t) => t.shift.staffName);
-  const topSales = groupBy((t) => (t.kind === "SALE" ? t.productName : "")).filter(([k]) => k).slice(0, 10);
-  const topRepairs = groupBy((t) => (t.kind === "REPAIR" ? t.productName : "")).filter(([k]) => k).slice(0, 10);
+  const topSales = groupBy((t) => (t.kind === "SALE" ? t.productName : ""))
+    .filter(([k]) => k)
+    .slice(0, 10);
+  const topRepairs = groupBy((t) => (t.kind === "REPAIR" ? t.productName : ""))
+    .filter(([k]) => k)
+    .slice(0, 10);
 
   return (
     <div className="space-y-5">
-      <PageHeader title={`Dashboard — ${formatMonth(month)}`} subtitle="Doanh thu theo ngày, chi nhánh, nhân viên, sản phẩm" />
+      <PageHeader
+        title={`Dashboard — ${period.label}`}
+        subtitle="Doanh thu theo ngày, chi nhánh, nhân viên, sản phẩm"
+      />
 
       <div className="flex flex-wrap items-center gap-2">
-        <MonthNav path="/dashboard" month={month} params={{ branch: branchId }} />
-        <BranchFilter path="/dashboard" month={month} branchId={branchId} branches={branches} />
+        <MonthNav path="/dashboard" month={period.month} params={{ branch: branchId }} />
+        <BranchFilter path="/dashboard" keep={keep} branchId={branchId} branches={branches} />
+        <DateRangeFilter path="/dashboard" period={period} branchId={branchId} />
       </div>
 
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
-        <StatCard label="Doanh thu" value={formatVND(sum.total)} change={percentChange(cur.revenue, prev.revenue)} />
+        <StatCard
+          label="Doanh thu"
+          value={formatVND(sum.total)}
+          change={percentChange(cur.revenue, prev.revenue)}
+          changeLabel={period.prevLabel}
+        />
         <StatCard
           label="Lãi gộp"
           value={formatVND(cur.gross)}
           amount={cur.gross}
           profit
           change={percentChange(cur.gross, prev.gross)}
+          changeLabel={period.prevLabel}
           sub={
             <>
               {cur.missingCost > 0 && `${cur.missingCost} giao dịch bán chưa có giá nhập · `}
-              <Link href={`/reports?month=${month}${branchId ? `&branch=${branchId}` : ""}`} className="text-[#1677ff] hover:underline">
+              <Link
+                href={`/reports?${new URLSearchParams({ ...keep, ...(branchId && { branch: String(branchId) }) })}`}
+                className="text-[#1677ff] hover:underline"
+              >
                 Lãi ròng ở Báo cáo
               </Link>
             </>
@@ -163,7 +182,9 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
 }
 
 function pct(part: number, total: number) {
-  return total ? `${((part / total) * 100).toLocaleString("vi-VN", { maximumFractionDigits: 1 })}% doanh thu` : undefined;
+  return total
+    ? `${((part / total) * 100).toLocaleString("vi-VN", { maximumFractionDigits: 1 })}% doanh thu`
+    : undefined;
 }
 
 function RankTable({

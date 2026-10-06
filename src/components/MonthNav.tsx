@@ -2,6 +2,8 @@ import Link from "next/link";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { addMonths } from "@/lib/format";
 import { NavInput } from "./NavInput";
+import { DatePicker } from "./DatePicker";
+import type { Period } from "@/lib/period";
 
 type Params = Record<string, string | number | null | undefined>;
 
@@ -31,21 +33,23 @@ export function MonthNav({ path, month, params = {} }: { path: string; month: st
   );
 }
 
-/** Lọc chi nhánh dùng chung (Dashboard, Báo cáo). Giữ tháng đang xem. */
+/** Lọc chi nhánh dùng chung (Dashboard, Báo cáo). Giữ khoảng thời gian đang xem (`keep`: month hoặc from/to). */
 export function BranchFilter({
   path,
-  month,
+  keep,
   branchId,
   branches,
 }: {
   path: string;
-  month: string;
+  keep: Record<string, string>;
   branchId?: number;
   branches: { id: number; name: string }[];
 }) {
   return (
     <form action={path} className="flex gap-2">
-      <input type="hidden" name="month" value={month} />
+      {Object.entries(keep).map(([k, v]) => (
+        <input key={k} type="hidden" name={k} value={v} />
+      ))}
       <select aria-label="Chi nhánh" name="branch" defaultValue={branchId ?? ""} className="input w-auto">
         <option value="">Tất cả chi nhánh</option>
         {branches.map((b) => (
@@ -55,6 +59,31 @@ export function BranchFilter({
         ))}
       </select>
       <button className="btn-secondary">Lọc</button>
+    </form>
+  );
+}
+
+/**
+ * Lọc từ ngày đến ngày (Dashboard, Báo cáo). Dùng cùng `MonthNav`: bấm ‹ › / chọn tháng thì quay về xem theo tháng.
+ */
+export function DateRangeFilter({ path, period, branchId }: { path: string; period: Period; branchId?: number }) {
+  const isRange = period.mode === "range";
+  return (
+    <form
+      action={path}
+      className={`flex flex-wrap items-center gap-2 rounded-md ${isRange ? "bg-blue-50 p-1 ring-1 ring-blue-200" : ""}`}
+    >
+      {branchId && <input type="hidden" name="branch" value={branchId} />}
+      <span className="pl-1 text-sm text-slate-500">Từ</span>
+      <DatePicker name="from" value={isRange ? period.from : ""} label="Từ ngày" placeholder="Từ ngày" required />
+      <span className="text-sm text-slate-500">đến</span>
+      <DatePicker name="to" value={isRange ? period.to : ""} label="Đến ngày" placeholder="Đến ngày" required />
+      <button className="btn-secondary">Xem</button>
+      {isRange && (
+        <Link href={`${path}?${query({ month: period.month, branch: branchId })}`} className="px-1 text-sm text-[#1677ff] hover:underline">
+          Bỏ lọc ngày
+        </Link>
+      )}
     </form>
   );
 }

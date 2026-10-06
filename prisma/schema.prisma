@@ -77,8 +77,11 @@ model Transaction {
   product        Product? @relation(fields: [productId], references: [id], onDelete: SetNull)
   productName    String
   loans          BranchLoan[]
+  gifts          TransactionGift[]
   price          Int
   costPrice      Int? // giá nhập tại thời điểm bán (lấy từ bảng giá), để tính lợi nhuận
+  /// Tổng giá nhập quà tặng kèm (chụp lúc bán) — cộng vào giá vốn khi tính lãi (lib/profit.ts)
+  giftCost       Int      @default(0)
   paymentMethod  String // CASH | TRANSFER
   bankAccount    String?
   warrantyMonths Int      @default(0) // 0-12; > 0 thì bắt buộc tên + SĐT khách
@@ -111,6 +114,20 @@ model StockTransfer {
   createdAt    DateTime @default(now())
 
   @@index([date])
+}
+
+/// Quà tặng kèm một giao dịch bán (giá 0 đ). Trừ số lượng sản phẩm; giá nhập tính vào giá vốn giao dịch.
+model TransactionGift {
+  id            Int         @id @default(autoincrement())
+  transactionId Int
+  transaction   Transaction @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+  productId     Int?
+  product       Product?    @relation(fields: [productId], references: [id], onDelete: SetNull)
+  productName   String
+  quantity      Int         @default(1)
+  costPrice     Int? // giá nhập / cái lúc tặng
+
+  @@index([transactionId])
 }
 
 /// Mượn hàng giữa chi nhánh: quán mượn (borrower) lấy hàng của quán cho mượn (lender).
@@ -199,6 +216,9 @@ model Product {
   ramGb          Int? // điện thoại: RAM (GB)
   storageGb      Int? // điện thoại: bộ nhớ trong (GB), 1TB = 1024
   condition      String          @default("NEW") // NEW | USED (máy cũ / 99%)
+  /// Số lượng còn: máy có IMEI luôn 1 (theo dõi bằng Đang bán / Đã bán); hàng khác trừ khi bán / tặng, cộng khi nhập.
+  /// Có thể âm khi số liệu chưa khớp (để không chặn bán hàng)
+  quantity       Int             @default(1)
   price          Int
   costPrice      Int? // giá nhập (chỉ admin thấy) để tính lợi nhuận
   warrantyMonths Int             @default(0) // bảo hành mặc định khi bán
@@ -208,10 +228,11 @@ model Product {
   soldBranchId   Int?
   soldBranch     Branch?         @relation("ProductSoldAt", fields: [soldBranchId], references: [id])
   soldAt         DateTime?
-  /// Chi nhánh sở hữu (nhập máy). Chi nhánh khác bán máy này → tự ghi vào sổ Mượn hàng (BranchLoan)
+  /// Chi nhánh quản lý hàng này (mỗi quán có nguồn hàng riêng). Quán khác bán / tặng → tự ghi sổ Mượn hàng (BranchLoan)
   ownerBranchId  Int?
   ownerBranch    Branch?         @relation("ProductOwner", fields: [ownerBranchId], references: [id])
   loans          BranchLoan[]
+  gifts          TransactionGift[]
   transactions   Transaction[]
   stockTransfers StockTransfer[]
   note           String? // tình trạng, pin, bảo hành...

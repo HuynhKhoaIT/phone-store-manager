@@ -50,7 +50,7 @@ export async function getCapitalReport() {
   const [txs, expenses] = await Promise.all([
     prisma.transaction.findMany({
       where: { shift: { date: { gte: earliest } } },
-      select: { kind: true, price: true, costPrice: true, shift: { select: { date: true, branchId: true } } },
+      select: { kind: true, price: true, costPrice: true, giftCost: true, shift: { select: { date: true, branchId: true } } },
     }),
     prisma.expense.findMany({ where: { date: { gte: earliest } }, select: { date: true, branchId: true, amount: true } }),
   ]);

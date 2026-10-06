@@ -3,12 +3,13 @@ import { BatteryMedium, Globe, Headphones, Search, Smartphone, TabletSmartphone 
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { requirePermission } from "@/lib/auth";
-import { getActiveBranches } from "@/lib/branch";
+import { getActiveBranches, getCurrentBranch } from "@/lib/branch";
 import {
   CATEGORY_LABEL,
   CONDITION_LABEL,
   STATUS_LABEL,
   capacityLabel,
+  isSingleUnit,
   productStatus,
   type ProductStatus,
 } from "@/lib/product-labels";
@@ -23,7 +24,7 @@ import { ProductFields } from "@/components/ProductFields";
 import { Pagination } from "@/components/Pagination";
 import { getPaging, pageHref } from "@/lib/paging";
 
-type Search = { cat?: string; q?: string; cond?: string; edit?: string; status?: string; brand?: string; page?: string };
+type Search = { cat?: string; q?: string; cond?: string; edit?: string; status?: string; brand?: string; branch?: string; page?: string };
 
 const STATUS_WHERE: Record<ProductStatus, Prisma.ProductWhereInput> = {
   AVAILABLE: { active: true, soldBranchId: null },
@@ -48,13 +49,19 @@ export default async function PricesPage({ searchParams }: { searchParams: Promi
   const statusOptions: ProductStatus[] = isAdmin ? ["AVAILABLE", "SOLD", "HIDDEN"] : ["AVAILABLE", "SOLD"];
   const status = statusOptions.find((s) => s === sp.status) ?? "AVAILABLE";
 
-  const [branches, brands] = await Promise.all([
+  const [branches, brands, current] = await Promise.all([
     getActiveBranches(),
     prisma.brand.findMany({ where: { active: true }, select: { id: true, name: true }, orderBy: { name: "asc" } }),
+    getCurrentBranch(),
   ]);
   const brandId = brands.find((b) => b.id === Number(sp.brand))?.id;
+  // Mỗi quán quản lý hàng riêng: mặc định xem hàng của quán đang làm; "all" = mọi quán
+  const branchId = sp.branch === "all" ? undefined : (branches.find((b) => b.id === Number(sp.branch))?.id ?? current?.id);
+  // Hàng cũ chưa gắn chi nhánh vẫn hiện ở mọi quán để admin gắn
+  const branchWhere: Prisma.ProductWhereInput = branchId ? { OR: [{ ownerBranchId: branchId }, { ownerBranchId: null }] } : {};
 
   const where: Prisma.ProductWhereInput = {
+    AND: [branchWhere],
     ...STATUS_WHERE[status],
     ...(cat && { category: cat }),
     ...(cond && { condition: cond }),
@@ -95,6 +102,7 @@ export default async function PricesPage({ searchParams }: { searchParams: Promi
     q,
     status: status === "AVAILABLE" ? "" : status,
     brand: brandId ? String(brandId) : "",
+    branch: sp.branch === "all" ? "all" : branchId && branchId !== current?.id ? String(branchId) : "",
   };
   // Giữ trang hiện tại để đóng hộp sửa vẫn ở đúng trang
   const qs = (patch: Partial<Search>) => {
@@ -107,21 +115,32 @@ export default async function PricesPage({ searchParams }: { searchParams: Promi
   const backHref = qs({});
   const today = todayVN();
 
-  // Thống kê (theo bộ lọc loại hàng đang chọn)
-  const catWhere: Prisma.ProductWhereInput = cat ? { category: cat } : {};
+  // Thống kê (theo chi nhánh + loại hàng đang chọn). Giá trị = giá × số lượng còn
+  const catWhere: Prisma.ProductWhereInput = { AND: [branchWhere], ...(cat && { category: cat }) };
   const monthStart = new Date(`${today.slice(0, 7)}-01T00:00:00+07:00`);
-  const [availableAgg, withCostAgg, soldThisMonth] = await Promise.all([
-    prisma.product.aggregate({ where: { ...STATUS_WHERE.AVAILABLE, ...catWhere }, _count: true, _sum: { price: true } }),
-    // Lãi dự kiến chỉ tính trên hàng đã có giá nhập
-    prisma.product.aggregate({
-      where: { ...STATUS_WHERE.AVAILABLE, ...catWhere, costPrice: { not: null } },
-      _count: true,
-      _sum: { price: true, costPrice: true },
+  const [stock, soldThisMonth] = await Promise.all([
+    prisma.product.findMany({
+      where: { ...STATUS_WHERE.AVAILABLE, ...catWhere },
+      select: { price: true, costPrice: true, quantity: true },
     }),
     prisma.product.count({ where: { ...catWhere, soldAt: { gte: monthStart } } }),
   ]);
+  const inStock = stock.filter((p) => p.quantity > 0);
+  const withCost = inStock.filter((p) => p.costPrice != null);
+  const availableAgg = {
+    _count: inStock.reduce((s, p) => s + p.quantity, 0),
+    _sum: { price: inStock.reduce((s, p) => s + p.price * p.quantity, 0) },
+  };
+  // Lãi dự kiến chỉ tính trên hàng đã có giá nhập
+  const withCostAgg = {
+    _count: withCost.reduce((s, p) => s + p.quantity, 0),
+    _sum: {
+      price: withCost.reduce((s, p) => s + p.price * p.quantity, 0),
+      costPrice: withCost.reduce((s, p) => s + (p.costPrice ?? 0) * p.quantity, 0),
+    },
+  };
 
-  const formProps = { branches, brands };
+  const formProps = { branches, brands, defaultBranchId: branchId ?? current?.id };
 
   return (
     <div className="space-y-5">
@@ -187,6 +206,28 @@ export default async function PricesPage({ searchParams }: { searchParams: Promi
             sub={`Lãi dự kiến ${formatVND((withCostAgg._sum.price ?? 0) - (withCostAgg._sum.costPrice ?? 0))} · ${withCostAgg._count}/${availableAgg._count} có giá nhập`}
           />
         )}
+      </div>
+
+      {/* Mỗi quán quản lý hàng riêng — mặc định quán đang làm; xem quán kia để mượn hàng */}
+      <div className="flex flex-wrap gap-2">
+        {[
+          ...branches.map((b) => ({
+            key: b.id === current?.id ? "" : String(b.id),
+            label: b.id === current?.id ? `${b.name} (quán này)` : b.name,
+            active: branchId === b.id,
+          })),
+          { key: "all", label: "Tất cả chi nhánh", active: !branchId },
+        ].map((t) => (
+          <Link
+            key={t.key || "current"}
+            href={pageHref("/products", { ...filters, branch: t.key })(1)}
+            className={`rounded-md px-3 py-1 text-sm font-medium ring-1 ${
+              t.active ? "bg-slate-900 text-white ring-slate-900" : "bg-white text-slate-600 ring-slate-200 hover:text-slate-900"
+            }`}
+          >
+            {t.label}
+          </Link>
+        ))}
       </div>
 
       {/* Tìm kiếm + hãng. Điện thoại: dính dưới thanh trên cùng khi cuộn */}
@@ -261,6 +302,7 @@ export default async function PricesPage({ searchParams }: { searchParams: Promi
                   {isAdmin && p.costPrice != null && <ProfitLine cost={p.costPrice} price={p.price} />}
                   <div className="mt-2 flex flex-wrap items-center gap-1.5">
                     <ConditionBadge condition={p.condition} />
+                    {!isSingleUnit(p) && st === "AVAILABLE" && <QtyBadge value={p.quantity} />}
                     {p.batteryHealth != null && <BatteryBadge value={p.batteryHealth} />}
                     {p.warrantyMonths > 0 && (
                       <span className="badge bg-slate-100 text-slate-700">BH {p.warrantyMonths} tháng</span>
@@ -335,6 +377,7 @@ export default async function PricesPage({ searchParams }: { searchParams: Promi
                   <td>
                     <div className="flex flex-wrap gap-1">
                       <ConditionBadge condition={p.condition} />
+                      {!isSingleUnit(p) && st === "AVAILABLE" && <QtyBadge value={p.quantity} />}
                       {p.batteryHealth != null && <BatteryBadge value={p.batteryHealth} />}
                     </div>
                   </td>
@@ -385,6 +428,15 @@ export default async function PricesPage({ searchParams }: { searchParams: Promi
 
       <Pagination paging={paging} href={pageHref("/products", filters)} />
     </div>
+  );
+}
+
+/** Số lượng còn của hàng đếm được (phụ kiện...). Hết / âm thì tô đỏ để nhập thêm hoặc kiểm kho. */
+function QtyBadge({ value }: { value: number }) {
+  return (
+    <span className={`badge tabular-nums ${value > 0 ? "bg-slate-100 text-slate-700" : "bg-red-100 text-red-700"}`}>
+      {value > 0 ? `Còn ${value}` : value === 0 ? "Hết hàng" : `Âm ${-value} — cần kiểm kho`}
+    </span>
   );
 }
 

@@ -45,7 +45,16 @@ export default async function LoansPage({ searchParams }: { searchParams: Promis
     // Sản phẩm để chọn khi ghi mượn (không gửi giá nhập xuống client)
     prisma.product.findMany({
       where: { active: true, soldBranchId: null },
-      select: { id: true, name: true, variant: true, condition: true, code: true, ramGb: true, storageGb: true },
+      select: {
+        id: true,
+        name: true,
+        variant: true,
+        condition: true,
+        code: true,
+        ramGb: true,
+        storageGb: true,
+        ownerBranch: { select: { name: true } },
+      },
       orderBy: { name: "asc" },
     }),
     // Công nợ: đã bán mà chưa trả tiền cho quán cho mượn
@@ -53,7 +62,11 @@ export default async function LoansPage({ searchParams }: { searchParams: Promis
       where: { status: "SOLD", paidAt: null },
       select: { lenderBranchId: true, borrowerBranchId: true, amount: true },
     }),
-    prisma.branchLoan.groupBy({ by: ["lenderBranchId", "borrowerBranchId"], where: { status: "BORROWED" }, _count: true }),
+    prisma.branchLoan.groupBy({
+      by: ["lenderBranchId", "borrowerBranchId"],
+      where: { status: "BORROWED" },
+      _count: true,
+    }),
   ]);
   const paging = getPaging(await prisma.branchLoan.count({ where }), sp.page);
   const [loans, editing] = await Promise.all([
@@ -82,7 +95,11 @@ export default async function LoansPage({ searchParams }: { searchParams: Promis
     p.amount >= 0 ? p : { ...p, from: p.to, to: p.from, amount: -p.amount },
   );
 
-  const options = products.map((p) => ({ id: p.id, label: productLabel(p) }));
+  // Cùng một phụ kiện ở 2 quán là 2 dòng → ghi kèm tên quán để chọn đúng
+  const options = products.map((p) => ({
+    id: p.id,
+    label: p.ownerBranch ? `${productLabel(p)} · ${p.ownerBranch.name}` : productLabel(p),
+  }));
   const otherBranch = activeBranches.find((b) => b.id !== current?.id);
   const listHref = pageHref("/products/loans", { tab: tab === "open" ? "" : tab });
   const backHref = listHref(paging.page);
@@ -104,7 +121,11 @@ export default async function LoansPage({ searchParams }: { searchParams: Promis
         subtitle="Mượn hàng giữa chi nhánh và thanh toán lại cho nhau"
         hideTitleOnMobile
         actions={
-          <FormDialog title="Ghi mượn hàng" triggerLabel="Ghi mượn hàng" triggerIcon={<Handshake size={16} aria-hidden />}>
+          <FormDialog
+            title="Ghi mượn hàng"
+            triggerLabel="Ghi mượn hàng"
+            triggerIcon={<Handshake size={16} aria-hidden />}
+          >
             <ActionForm
               action={saveLoan}
               submitLabel="Lưu"
@@ -129,7 +150,14 @@ export default async function LoansPage({ searchParams }: { searchParams: Promis
               </label>
               <label className="field">
                 <span>Ngày mượn *</span>
-                <input name="date" type="date" required defaultValue={today} max={isAdmin ? undefined : today} className="input" />
+                <input
+                  name="date"
+                  type="date"
+                  required
+                  defaultValue={today}
+                  max={isAdmin ? undefined : today}
+                  className="input"
+                />
               </label>
               <label className="field sm:col-span-2">
                 <span>Ghi chú</span>
@@ -145,7 +173,12 @@ export default async function LoansPage({ searchParams }: { searchParams: Promis
 
       {editing && (
         <FormDialog key={editing.id} title={`Sửa: ${editing.productName}`} defaultOpen closeHref={backHref}>
-          <ActionForm action={saveLoan} submitLabel="Lưu" successMessage="Đã lưu." className="grid gap-3 sm:grid-cols-2">
+          <ActionForm
+            action={saveLoan}
+            submitLabel="Lưu"
+            successMessage="Đã lưu."
+            className="grid gap-3 sm:grid-cols-2"
+          >
             <input type="hidden" name="id" value={editing.id} />
             <label className="field">
               <span>Số tiền phải trả</span>
@@ -167,7 +200,10 @@ export default async function LoansPage({ searchParams }: { searchParams: Promis
           {debts
             .filter((d) => d.amount > 0 || !isAdmin)
             .map((d) => (
-              <div key={`${d.from}-${d.to}`} className="card flex items-center gap-3 border-amber-200 bg-amber-50/50 p-3 sm:p-4">
+              <div
+                key={`${d.from}-${d.to}`}
+                className="card flex items-center gap-3 border-amber-200 bg-amber-50/50 p-3 sm:p-4"
+              >
                 <div className="min-w-0 flex-1">
                   <p className="flex flex-wrap items-center gap-1.5 text-sm text-slate-600">
                     <b className="text-slate-900">{branchName(d.from)}</b>
@@ -202,7 +238,9 @@ export default async function LoansPage({ searchParams }: { searchParams: Promis
             key={k}
             href={k === "open" ? "/products/loans" : `/products/loans?tab=${k}`}
             className={`rounded-md px-3 py-1 text-sm font-medium ring-1 ${
-              tab === k ? "bg-slate-900 text-white ring-slate-900" : "bg-white text-slate-600 ring-slate-200 hover:text-slate-900"
+              tab === k
+                ? "bg-slate-900 text-white ring-slate-900"
+                : "bg-white text-slate-600 ring-slate-200 hover:text-slate-900"
             }`}
           >
             {t.label}
@@ -251,7 +289,9 @@ export default async function LoansPage({ searchParams }: { searchParams: Promis
                       <span className="block text-xs text-slate-500">
                         {state === "RETURNED" && l.returnedDate && `Trả ngày ${formatDate(l.returnedDate)}`}
                         {(state === "UNPAID" || state === "PAID") && l.soldDate && `Bán ngày ${formatDate(l.soldDate)}`}
-                        {state === "PAID" && l.paidAt && ` · TT ${formatDate(dateVN(l.paidAt))}${l.paidBy ? ` (${l.paidBy})` : ""}`}
+                        {state === "PAID" &&
+                          l.paidAt &&
+                          ` · TT ${formatDate(dateVN(l.paidAt))}${l.paidBy ? ` (${l.paidBy})` : ""}`}
                       </span>
                     </span>
                   </td>
@@ -309,7 +349,10 @@ export default async function LoansPage({ searchParams }: { searchParams: Promis
                           <Link href={editHref(l.id)} className="text-sm text-[#1677ff] hover:underline">
                             Sửa
                           </Link>
-                          <ConfirmButton action={deleteLoan.bind(null, l.id)} message={`Xoá dòng mượn "${l.productName}"?`}>
+                          <ConfirmButton
+                            action={deleteLoan.bind(null, l.id)}
+                            message={`Xoá dòng mượn "${l.productName}"?`}
+                          >
                             Xoá
                           </ConfirmButton>
                         </>

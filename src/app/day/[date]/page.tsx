@@ -7,6 +7,7 @@ import { getCurrentBranch } from "@/lib/branch";
 import { can } from "@/lib/permissions";
 import { getPriceSuggestions } from "@/lib/prices";
 import { summarize } from "@/lib/summary";
+import { profitOf } from "@/lib/profit";
 import { getDayChecklist } from "@/lib/checklist";
 import { addDays, formatDateLong, formatVND, isValidDate, nowTimeVN, todayVN } from "@/lib/format";
 import { openShift } from "../../actions";
@@ -36,7 +37,7 @@ export default async function DayPage({ params }: { params: Promise<{ date: stri
   const [shifts, accounts, suggestions, checklist] = await Promise.all([
     prisma.shift.findMany({
       where: { date, branchId: branch.id },
-      include: { transactions: { orderBy: { createdAt: "asc" } } },
+      include: { transactions: { orderBy: { createdAt: "asc" }, include: { gifts: true } } },
       orderBy: [{ checkIn: "asc" }, { id: "asc" }],
     }),
     prisma.transaction.findMany({
@@ -50,9 +51,23 @@ export default async function DayPage({ params }: { params: Promise<{ date: stri
     getDayChecklist(date, branch.id),
   ]);
   // Checklist nằm ở trang Việc cần làm; ở đây chỉ đếm việc chưa xong để cảnh báo khi chốt ca
+  // Mỗi quán quản lý hàng riêng: hàng quán khác ghi rõ "(hàng …)" — bán / tặng sẽ tự ghi sổ Mượn hàng.
+  // Hàng của quán mình xếp trước
+  const saleSuggestions = suggestions.sale
+    .map((s) =>
+      s.ownerBranchId && s.ownerBranchId !== branch.id ? { ...s, label: `${s.label} (hàng ${s.ownerName})` } : s,
+    )
+    // Hàng chưa gắn chi nhánh coi như của quán mình
+    .sort(
+      (a, b) =>
+        Number((a.ownerBranchId ?? branch.id) !== branch.id) - Number((b.ownerBranchId ?? branch.id) !== branch.id),
+    );
+  const giftOptions = saleSuggestions.filter((s) => s.giftable && (s.quantity ?? 0) > 0);
   const checklistLeft = checklist.filter((c) => !c.check).length;
 
   const day = summarize(shifts.flatMap((s) => s.transactions));
+  // Lãi chỉ admin xem — cùng công thức Dashboard / Báo cáo
+  const dayProfit = isAdmin ? profitOf(shifts.flatMap((s) => s.transactions)) : null;
   const hasOpenShift = shifts.some((s) => s.userId === me.id && !s.closedAt);
   // Chỉ nhân viên vào ca (admin chỉ xem / quản lý ca của nhân viên)
   const canOpenShift = !isAdmin && canSell && !hasOpenShift && date === today;
@@ -61,7 +76,12 @@ export default async function DayPage({ params }: { params: Promise<{ date: stri
 
   const openShiftDialog = (
     <FormDialog title={`Vào ca — ${me.name}`} triggerLabel={hadShift ? "Vào ca mới" : "Vào ca"}>
-      <ActionForm action={openShift} submitLabel="Bắt đầu ca" successMessage="Đã vào ca." className="grid gap-3 sm:grid-cols-2">
+      <ActionForm
+        action={openShift}
+        submitLabel="Bắt đầu ca"
+        successMessage="Đã vào ca."
+        className="grid gap-3 sm:grid-cols-2"
+      >
         <input type="hidden" name="date" value={date} />
         <label className="field">
           <span>Giờ đi làm *</span>
@@ -109,8 +129,16 @@ export default async function DayPage({ params }: { params: Promise<{ date: stri
         }
       />
 
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+      <div className={`grid grid-cols-2 gap-3 ${dayProfit ? "md:grid-cols-5" : "md:grid-cols-4"}`}>
         <Stat label="Doanh thu ngày" value={formatVND(day.total)} sub={`${day.count} giao dịch`} strong />
+        {dayProfit && (
+          <Stat
+            label="Lãi gộp ngày"
+            value={formatVND(dayProfit.gross)}
+            sub={dayProfit.missingCost > 0 ? `${dayProfit.missingCost} giao dịch chưa có giá nhập` : "Chỉ admin thấy"}
+            tone={dayProfit.gross >= 0 ? "text-green-700" : "text-red-600"}
+          />
+        )}
         <Stat label="Bán hàng / Sửa chữa" value={formatVND(day.sale)} sub={`Sửa chữa: ${formatVND(day.repair)}`} />
         <Stat label="Tiền mặt (TM)" value={formatVND(day.cash)} />
         <Stat label="Chuyển khoản (CK)" value={formatVND(day.transfer)} />
@@ -144,7 +172,8 @@ export default async function DayPage({ params }: { params: Promise<{ date: stri
           defaultCheckOut={date === today ? nowTimeVN() : "21:00"}
           checklistLeft={checklistLeft}
           bankAccounts={bankAccounts}
-          saleSuggestions={suggestions.sale}
+          saleSuggestions={saleSuggestions}
+          giftOptions={giftOptions}
           repairSuggestions={suggestions.repair}
         />
       ))}
@@ -152,11 +181,24 @@ export default async function DayPage({ params }: { params: Promise<{ date: stri
   );
 }
 
-function Stat({ label, value, sub, strong }: { label: string; value: string; sub?: string; strong?: boolean }) {
+function Stat({
+  label,
+  value,
+  sub,
+  strong,
+  tone,
+}: {
+  label: string;
+  value: string;
+  sub?: string;
+  strong?: boolean;
+  /** Màu chữ số liệu (vd xanh / đỏ cho lãi / lỗ) */
+  tone?: string;
+}) {
   return (
     <div className="card">
       <p className="text-xs font-medium text-slate-500">{label}</p>
-      <p className={`mt-1 font-bold tabular-nums ${strong ? "text-2xl text-blue-700" : "text-lg"}`}>{value}</p>
+      <p className={`mt-1 font-bold tabular-nums ${strong ? "text-2xl text-blue-700" : `text-lg ${tone ?? ""}`}`}>{value}</p>
       {sub && <p className="mt-0.5 text-xs text-slate-500">{sub}</p>}
     </div>
   );

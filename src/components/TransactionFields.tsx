@@ -1,20 +1,35 @@
 "use client";
 
 import { useState } from "react";
+import { Gift, Plus, X } from "lucide-react";
 import { MoneyInput } from "./MoneyInput";
 
-export type PriceSuggestion = { label: string; price: number; warrantyMonths?: number; productId?: number };
+export type PriceSuggestion = {
+  label: string;
+  price: number;
+  warrantyMonths?: number;
+  productId?: number;
+  ownerBranchId?: number | null;
+  ownerName?: string;
+  /** Số lượng còn (hàng đếm được); máy có IMEI không có */
+  quantity?: number;
+  /** Phụ kiện — chọn làm quà tặng kèm được */
+  giftable?: boolean;
+};
 
 export function TransactionFields({
   shiftId,
   bankAccounts,
   saleSuggestions,
   repairSuggestions,
+  giftOptions = [],
 }: {
   shiftId: number;
   bankAccounts: string[];
   saleSuggestions: PriceSuggestion[];
   repairSuggestions: PriceSuggestion[];
+  /** Phụ kiện còn hàng để tặng kèm (giá 0 đ) */
+  giftOptions?: PriceSuggestion[];
 }) {
   const [kind, setKind] = useState<"SALE" | "REPAIR">("SALE");
   const [payment, setPayment] = useState<"CASH" | "TRANSFER">("CASH");
@@ -134,11 +149,90 @@ export function TransactionFields({
           Có bảo hành: bắt buộc nhập tên và số điện thoại khách để tra cứu sau này.
         </p>
       )}
+      {kind === "SALE" && <GiftList shiftId={shiftId} options={giftOptions} />}
       <label className="field sm:col-span-2">
         <span>Ghi chú</span>
         <input name="note" className="input" />
       </label>
     </>
+  );
+}
+
+/**
+ * Quà tặng kèm khi bán (sạc, tai nghe, ốp lưng, cường lực...): chọn phụ kiện của cửa hàng + số lượng.
+ * Giá 0 đ; server trừ số lượng và cộng giá nhập vào giá vốn giao dịch. Chỉ nhận món chọn đúng trong danh sách.
+ */
+function GiftList({ shiftId, options }: { shiftId: number; options: PriceSuggestion[] }) {
+  const [rows, setRows] = useState<{ key: number; text: string; qty: number }[]>([]);
+  const listId = `gifts-${shiftId}`;
+  const update = (key: number, patch: Partial<{ text: string; qty: number }>) =>
+    setRows((r) => r.map((x) => (x.key === key ? { ...x, ...patch } : x)));
+
+  return (
+    <fieldset className="col-span-full rounded-md border border-slate-200 p-3">
+      <legend className="flex items-center gap-1.5 px-1 text-sm font-medium text-slate-700">
+        <Gift size={16} className="text-rose-500" aria-hidden /> Quà tặng kèm
+      </legend>
+      <datalist id={listId}>
+        {options.map((o) => (
+          <option key={o.productId} value={o.label}>
+            {o.quantity != null ? `Còn ${o.quantity}` : ""}
+          </option>
+        ))}
+      </datalist>
+      <div className="space-y-2">
+        {rows.map((r) => {
+          const match = options.find((o) => o.label === r.text);
+          return (
+            <div key={r.key}>
+              <div className="flex items-center gap-2">
+                <input
+                  list={listId}
+                  value={r.text}
+                  onChange={(e) => update(r.key, { text: e.target.value })}
+                  autoComplete="off"
+                  aria-label="Phụ kiện tặng"
+                  placeholder="Gõ để tìm phụ kiện..."
+                  className="input min-w-0 flex-1"
+                />
+                <input
+                  type="number"
+                  name="giftQty"
+                  min={1}
+                  max={99}
+                  value={r.qty}
+                  onChange={(e) => update(r.key, { qty: Number(e.target.value) })}
+                  aria-label="Số lượng"
+                  className="input w-16 shrink-0 text-center tabular-nums"
+                />
+                <button
+                  type="button"
+                  onClick={() => setRows((x) => x.filter((y) => y.key !== r.key))}
+                  aria-label="Bỏ quà này"
+                  className="shrink-0 rounded-md p-2 text-slate-400 hover:bg-slate-100 hover:text-red-600"
+                >
+                  <X size={16} aria-hidden />
+                </button>
+              </div>
+              {/* Server chỉ nhận id: chưa khớp danh sách thì gửi rỗng → báo lỗi rõ ràng */}
+              <input type="hidden" name="giftProductId" value={match?.productId ?? ""} />
+              {r.text && !match && <small className="text-amber-700">Chọn đúng một phụ kiện trong danh sách gợi ý.</small>}
+              {match?.quantity != null && r.qty > match.quantity && (
+                <small className="text-amber-700">Chỉ còn {match.quantity} — vẫn lưu được, nhớ kiểm kho.</small>
+              )}
+            </div>
+          );
+        })}
+      </div>
+      <button
+        type="button"
+        onClick={() => setRows((r) => [...r, { key: Date.now(), text: "", qty: 1 }])}
+        className="mt-2 inline-flex items-center gap-1 text-sm font-medium text-[#1677ff] hover:underline"
+      >
+        <Plus size={16} aria-hidden /> Thêm quà tặng
+      </button>
+      {rows.length > 0 && <p className="mt-1 text-xs text-slate-500">Quà tặng tính 0 đ, tự trừ số lượng trong kho.</p>}
+    </fieldset>
   );
 }
 

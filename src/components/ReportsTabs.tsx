@@ -1,7 +1,7 @@
 import Link from "next/link";
 
 const TABS = [
-  { href: "/reports", label: "Lãi lỗ theo tháng", key: "pnl" },
+  { href: "/reports", label: "Lãi lỗ", key: "pnl" },
   { href: "/reports/break-even", label: "Hoà vốn", key: "break-even" },
   { href: "/reports/capital", label: "Góp vốn", key: "capital" },
 ] as const;

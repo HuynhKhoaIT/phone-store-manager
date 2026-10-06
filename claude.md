@@ -47,7 +47,7 @@ Không có migration files: schema được đồng bộ bằng `prisma db push`
 | `/brands` | Admin | Danh mục thương hiệu để chọn khi nhập phụ kiện / Android |
 | `/repair-prices` | Xem: tất cả · Sửa: admin | Bảng giá sửa chữa theo dịch vụ (thay pin, thay màn…) × dòng máy |
 | `/warranty` | Tất cả | Tra cứu bảo hành theo SĐT / tên khách / tên sản phẩm |
-| `/products/receipts` (`/transfers` cũ tự chuyển về) | Tất cả (xoá: admin) | Tab **Phiếu nhập / chuyển**: phiếu *Nhập từ NCC* (nhà cung cấp, chi nhánh nhận; admin nhập giá nhập/cái → tự cập nhật `Product.costPrice`) và phiếu *Chuyển chi nhánh*. Sản phẩm chọn từ danh sách hàng hoá (`ProductPicker`), chưa có trong danh sách thì lưu theo tên gõ. **Chưa theo dõi tồn kho số lượng** |
+| `/products/receipts` (`/transfers` cũ tự chuyển về) | Tất cả (xoá: admin) | Tab **Phiếu nhập / chuyển**: phiếu *Nhập từ NCC* (nhà cung cấp, chi nhánh nhận; admin nhập giá nhập/cái → tự cập nhật `Product.costPrice`) và phiếu *Chuyển chi nhánh*. Sản phẩm chọn từ danh sách hàng hoá (`ProductPicker`), chưa có trong danh sách thì lưu theo tên gõ. Phiếu cập nhật số lượng (xem **Số lượng & chi nhánh**) |
 | `/timesheet` | Tất cả (admin xem được của người khác) | Chấm công theo tháng: ngày, chi nhánh, giờ vào/ra, tổng giờ |
 | `/dashboard` | Admin | Doanh thu tháng, so với tháng trước, biểu đồ theo ngày, TM/CK, theo chi nhánh/nhân viên, top sản phẩm |
 | `/reports` | Admin | **Báo cáo** lãi lỗ theo tháng: doanh thu − giá vốn (`Transaction.costPrice`) = lãi gộp; − **chi phí** (`Expense`: mặt bằng, lương, điện nước, linh kiện…, theo chi nhánh hoặc chung) = lãi ròng. Theo chi nhánh, 6 tháng gần đây, nhập/sửa/xoá chi phí. Xuất Excel (`/reports/export?type=transactions|expenses&month=`) dạng UTF-16LE + tab — Excel tiếng Việt mở CSV dấu phẩy bị dồn một cột |
@@ -87,6 +87,12 @@ Giao diện (`src/components/AppShell.tsx`, danh sách menu dùng chung ở `src
 - `code`: IMEI (điện thoại) hoặc mã vạch / mã riêng (phụ kiện), không trùng nhau. **Điện thoại có mã = một máy cụ thể** (`isSingleUnit`): bán qua giao dịch (chọn đúng gợi ý) thì tự đánh dấu Đã bán tại chi nhánh của ca và biến khỏi gợi ý; admin xoá giao dịch thì máy trở lại Đang bán. Phụ kiện có mã không tự đánh dấu.
 - `costPrice` (giá nhập) **chỉ admin thấy**; không được đưa vào dữ liệu gửi xuống client của nhân viên (gợi ý giá không chứa giá nhập). Khi bán, giá nhập được chụp vào `Transaction.costPrice` → Dashboard tính **Lợi nhuận** trên các giao dịch có giá nhập.
 - `ramGb` / `storageGb` (điện thoại, chọn từ `RAM_OPTIONS` / `STORAGE_OPTIONS`), `batteryHealth` (chỉ iPhone, 1–100). Tên khi bán = `productLabel()`, vd "iPhone 13 Pro Max 6/128GB Xanh (Cũ) - Mã 3567…" → tra bảo hành theo IMEI được.
+
+**Số lượng & chi nhánh của hàng hoá** (`src/lib/stock.ts`)
+- Mỗi quán quản lý nguồn hàng riêng: `Product.ownerBranchId` (bắt buộc khi lưu) + `Product.quantity`. Cùng một phụ kiện ở 2 quán là 2 dòng (`branchTwin` tìm / tạo dòng tương ứng). Trang Hàng hoá mặc định lọc theo quán đang làm; hàng cũ chưa gắn chi nhánh hiện ở mọi quán.
+- Máy có IMEI (`isSingleUnit`) luôn SL 1, theo dõi bằng Đang bán / Đã bán. Hàng khác: bán qua trang Bán hàng trừ 1, quà tặng trừ đúng SL, phiếu nhập cộng, phiếu chuyển trừ quán gửi / cộng quán nhận (máy IMEI thì đổi `ownerBranchId`). Xoá giao dịch / phiếu thì hoàn lại. SL có thể âm (không chặn bán) — danh sách hiện đỏ "cần kiểm kho".
+- **Quà tặng kèm** (`TransactionGift`): khi bán, chọn phụ kiện của cửa hàng + SL, giá 0 đ. Giá nhập quà chụp vào `Transaction.giftCost` và cộng vào giá vốn trong `profitOf` → Dashboard / Báo cáo / Hoà vốn / xuất Excel tự trừ.
+- Bán hoặc tặng hàng của quán khác → `consumeBorrowed` ghi sổ Mượn hàng (dùng dòng "đang mượn" có sẵn, tách nếu chỉ dùng một phần). Gợi ý trang Bán hàng ghi "(hàng <quán>)" để nhân viên biết.
 
 **Web marketing / API công khai** (`src/lib/public-api.ts`, `src/app/api/public/**`)
 - Chỉ sản phẩm `showOnWeb = true` và `active` mới ra API; máy đã bán chỉ hiện khi `includeSold=1` hoặc mở theo slug.
@@ -153,6 +159,8 @@ src/components/             # Client components dùng chung
 - Mọi trang bắt đầu bằng `<PageHeader title subtitle actions>`.
 - **Bảng trên điện thoại tự thành danh sách thẻ** (CSS trong `globals.css`): mỗi `<td>` cần `data-label="..."`, ô tiêu đề của thẻ dùng `data-title`; ô có nhiều phần tử con thì bọc trong một thẻ.
 - Bo góc theo antd 5: ô nhập/nút `rounded-md` (6px), thẻ/popup `rounded-lg` (8px), badge `rounded` (4px). Màu chính `#1677ff`.
+- **Khoảng thời gian Dashboard / Báo cáo / xuất Excel**: `getPeriod()` trong `src/lib/period.ts` — `?month=` hoặc `?from=&to=` (ưu tiên khoảng ngày, tối đa 366 ngày). Kỳ so sánh = tháng trước hoặc cùng số ngày liền trước. Lọc DB bằng `date: { gte: from, lte: to }`; giữ tham số qua link bằng `periodParams()`.
+- **Chọn ngày / tháng**: dùng `<DatePicker>` / `<NavInput type="month">` (lịch tiếng Việt), không dùng `<input type="date|month">` của trình duyệt (hiện theo ngôn ngữ trình duyệt, thường kiểu Mỹ).
 - **Phân trang mọi bảng / danh sách: 20 dòng** (`src/lib/paging.ts` + `<Pagination>`). Cùng tham số `?page=`: máy tính hiện đúng 20 dòng của trang (dãy số trang), điện thoại hiện cộng dồn và có nút **"Xem thêm"**. Vì vậy lấy dữ liệu từ đầu: `count` → `getPaging(total, sp.page)` → `findMany({ take: paging.take })` (không `skip`), mỗi dòng gắn `rowClass(paging, i)` (ẩn dòng trang trước trên máy tính). `orderBy` phải có `id` làm khoá phụ để thứ tự ổn định. Số liệu thống kê luôn tính trên toàn bộ dữ liệu, không trên trang. Không phân trang: bảng tổng hợp / top 10 / lịch tháng.
 - **Nút xoá / thao tác nhanh**: `<ConfirmButton action={serverAction.bind(null, id)} message="...">`.
 - Trang chỉ cho admin gọi `await requireAdmin()` ở đầu; trang theo quyền gọi `await requirePermission("key")`; trang chung gọi `await requireUser()`.

@@ -25,6 +25,8 @@ export function DailyRevenueChart({ data }: { data: DailyPoint[] }) {
   const [hover, setHover] = useState<number | null>(null);
   const max = Math.max(0, ...data.map((d) => d.sale + d.repair));
   const { top, step } = niceMax(max);
+  const labelStep = Math.max(5, Math.ceil(data.length / 8));
+  const multiMonth = data.length > 0 && data[0].date.slice(0, 7) !== data[data.length - 1].date.slice(0, 7);
   const ticks = Array.from({ length: Math.round(top / step) + 1 }, (_, i) => i * step);
   const h = (v: number) => `${(v / top) * 100}%`;
   const active = hover != null ? data[hover] : null;
@@ -107,13 +109,17 @@ export function DailyRevenueChart({ data }: { data: DailyPoint[] }) {
         </div>
       </div>
 
-      {/* Trục X: hiện mỗi 5 ngày */}
+      {/* Trục X: tối đa ~8 nhãn (khoảng ngày dài thì giãn ra); qua nhiều tháng thì ghi ngày/tháng */}
       <div className="mt-1 flex gap-2">
         <div className="w-10 shrink-0" />
-        <div className="flex flex-1 text-[11px] text-slate-400">
+        <div className="flex flex-1 text-[11px] whitespace-nowrap text-slate-400">
           {data.map((d, i) => (
             <span key={d.date} className="flex-1 text-center">
-              {i === 0 || (i + 1) % 5 === 0 ? Number(d.date.slice(8)) : ""}
+              {i === 0 || (i + 1) % labelStep === 0
+                ? multiMonth
+                  ? `${d.date.slice(8)}/${d.date.slice(5, 7)}`
+                  : Number(d.date.slice(8))
+                : ""}
             </span>
           ))}
         </div>

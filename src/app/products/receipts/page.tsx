@@ -39,7 +39,16 @@ export default async function ReceiptsPage({ searchParams }: { searchParams: Pro
     // Sản phẩm để chọn khi tạo phiếu (không gửi giá nhập xuống client)
     prisma.product.findMany({
       where: { active: true, soldBranchId: null },
-      select: { id: true, name: true, variant: true, condition: true, code: true, ramGb: true, storageGb: true },
+      select: {
+        id: true,
+        name: true,
+        variant: true,
+        condition: true,
+        code: true,
+        ramGb: true,
+        storageGb: true,
+        ownerBranch: { select: { name: true } },
+      },
       orderBy: { name: "asc" },
     }),
   ]);
@@ -50,10 +59,17 @@ export default async function ReceiptsPage({ searchParams }: { searchParams: Pro
     orderBy: [{ date: "desc" }, { createdAt: "desc" }, { id: "desc" }],
     take: paging.take,
   });
-  const options = products.map((p) => ({ id: p.id, label: productLabel(p) }));
+  // Cùng một phụ kiện ở 2 quán là 2 dòng → ghi kèm tên quán để chọn đúng
+  const options = products.map((p) => ({
+    id: p.id,
+    label: p.ownerBranch ? `${productLabel(p)} · ${p.ownerBranch.name}` : productLabel(p),
+  }));
   const otherBranch = branches.find((b) => b.id !== current?.id);
   const totalQty = all.reduce((s, t) => s + t.quantity, 0);
-  const importValue = all.reduce((s, t) => s + (t.type === "IMPORT" && t.unitCost != null ? t.unitCost * t.quantity : 0), 0);
+  const importValue = all.reduce(
+    (s, t) => s + (t.type === "IMPORT" && t.unitCost != null ? t.unitCost * t.quantity : 0),
+    0,
+  );
 
   const qs = (patch: Partial<Search>) => {
     const p = new URLSearchParams();
@@ -82,7 +98,14 @@ export default async function ReceiptsPage({ searchParams }: { searchParams: Pro
       </label>
       <label className="field">
         <span>Ngày *</span>
-        <input name="date" type="date" required defaultValue={today} max={isAdmin ? undefined : today} className="input" />
+        <input
+          name="date"
+          type="date"
+          required
+          defaultValue={today}
+          max={isAdmin ? undefined : today}
+          className="input"
+        />
       </label>
     </>
   );

@@ -30,6 +30,7 @@ export type ProductFormValue = {
   active: boolean;
   soldBranchId: number | null;
   ownerBranchId: number | null;
+  quantity: number;
   note: string | null;
   showOnWeb: boolean;
   slug: string | null;
@@ -47,11 +48,14 @@ export function ProductFields({
   defaultCategory,
   branches,
   brands,
+  defaultBranchId,
 }: {
   product?: ProductFormValue;
   defaultCategory: string;
   branches: Option[];
   brands: Option[];
+  /** Chi nhánh đang làm — mặc định khi thêm hàng mới */
+  defaultBranchId?: number;
 }) {
   const [category, setCategory] = useState(product?.category ?? defaultCategory);
   const [status, setStatus] = useState<ProductStatus>(product ? productStatus(product) : "AVAILABLE");
@@ -225,16 +229,32 @@ export function ProductFields({
         </label>
       )}
       <label className="field">
-        <span>Chi nhánh sở hữu</span>
-        <select name="ownerBranchId" defaultValue={product?.ownerBranchId ?? ""} className="input">
-          <option value="">— Không xác định —</option>
+        <span>Chi nhánh *</span>
+        <select name="ownerBranchId" required defaultValue={product?.ownerBranchId ?? defaultBranchId ?? ""} className="input">
+          <option value="" disabled>
+            — Chọn chi nhánh —
+          </option>
           {branches.map((b) => (
             <option key={b.id} value={b.id}>
               {b.name}
             </option>
           ))}
         </select>
-        <small className="text-slate-500">Quán nhập máy. Quán khác bán máy này sẽ tự ghi vào Mượn hàng.</small>
+        <small className="text-slate-500">Quán quản lý hàng này. Quán khác bán / tặng sẽ tự ghi vào Mượn hàng.</small>
+      </label>
+      <label className="field">
+        <span>Số lượng còn *</span>
+        <input
+          name="quantity"
+          type="number"
+          min={0}
+          required
+          defaultValue={product?.quantity ?? 1}
+          className="input tabular-nums"
+        />
+        <small className="text-slate-500">
+          {isPhone ? "Máy có IMEI luôn tính 1 chiếc." : "Tự trừ khi bán / tặng, tự cộng khi nhập hàng."}
+        </small>
       </label>
       <label className="field sm:col-span-2">
         <span>Ghi chú nội bộ</span>

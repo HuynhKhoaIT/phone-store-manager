@@ -1,7 +1,8 @@
 import { prisma } from "@/lib/db";
 import { getSessionUser } from "@/lib/auth";
 import { EXPENSE_CATEGORIES } from "@/lib/expenses";
-import { formatDate, isValidMonth, KIND_LABEL, PAYMENT_LABEL, todayVN } from "@/lib/format";
+import { formatDate, KIND_LABEL, PAYMENT_LABEL, todayVN } from "@/lib/format";
+import { getPeriod } from "@/lib/period";
 
 type Cell = string | number | null | undefined;
 
@@ -25,19 +26,24 @@ export async function GET(req: Request) {
 
   const url = new URL(req.url);
   const type = url.searchParams.get("type") === "expenses" ? "expenses" : "transactions";
-  const m = url.searchParams.get("month") ?? "";
-  const month = isValidMonth(m) ? m : todayVN().slice(0, 7);
+  // Theo tháng hoặc từ ngày đến ngày — cùng cách đọc với trang Báo cáo
+  const q = (k: string) => url.searchParams.get(k) ?? undefined;
+  const period = getPeriod({ month: q("month"), from: q("from"), to: q("to") }, todayVN());
+  const dateRange = { gte: period.from, lte: period.to };
   const branchId = Number(url.searchParams.get("branch")) || undefined;
 
   let rows: Cell[][];
   if (type === "transactions") {
     const txs = await prisma.transaction.findMany({
-      where: { shift: { date: { startsWith: month }, ...(branchId && { branchId }) } },
-      include: { shift: { select: { date: true, staffName: true, branch: { select: { name: true } } } } },
+      where: { shift: { date: dateRange, ...(branchId && { branchId }) } },
+      include: {
+        shift: { select: { date: true, staffName: true, branch: { select: { name: true } } } },
+        gifts: { select: { productName: true, quantity: true } },
+      },
       orderBy: [{ shift: { date: "asc" } }, { createdAt: "asc" }],
     });
     rows = [
-      ["Ngày", "Chi nhánh", "Nhân viên", "Loại", "Sản phẩm / Dịch vụ", "Giá bán", "Giá nhập", "Lãi", "Thanh toán",
+      ["Ngày", "Chi nhánh", "Nhân viên", "Loại", "Sản phẩm / Dịch vụ", "Giá bán", "Giá nhập", "Quà tặng", "Giá vốn quà", "Lãi", "Thanh toán",
         "Tài khoản nhận", "Bảo hành (tháng)", "Khách hàng", "SĐT", "Ghi chú"],
       ...txs.map((t) => [
         formatDate(t.shift.date),
@@ -47,7 +53,10 @@ export async function GET(req: Request) {
         t.productName,
         t.price,
         t.costPrice,
-        t.costPrice != null ? t.price - t.costPrice : null,
+        t.gifts.map((g) => (g.quantity > 1 ? `${g.productName} x${g.quantity}` : g.productName)).join(", ") || null,
+        t.giftCost || null,
+        // Lãi = giá bán − giá nhập − giá vốn quà tặng (cùng công thức lib/profit.ts)
+        t.costPrice != null ? t.price - t.costPrice - t.giftCost : null,
         PAYMENT_LABEL[t.paymentMethod],
         t.bankAccount,
         t.warrantyMonths || null,
@@ -59,7 +68,7 @@ export async function GET(req: Request) {
     ];
   } else {
     const expenses = await prisma.expense.findMany({
-      where: { date: { startsWith: month }, ...(branchId && { branchId }) },
+      where: { date: dateRange, ...(branchId && { branchId }) },
       include: { branch: { select: { name: true } } },
       orderBy: [{ date: "asc" }, { id: "asc" }],
     });
@@ -76,7 +85,8 @@ export async function GET(req: Request) {
     ];
   }
 
-  const filename = `${type === "transactions" ? "giao-dich" : "chi-phi"}-${month}.csv`;
+  const suffix = period.mode === "month" ? period.month : `${period.from}_${period.to}`;
+  const filename = `${type === "transactions" ? "giao-dich" : "chi-phi"}-${suffix}.csv`;
   return new Response(toExcelText(rows), {
     headers: {
       "Content-Type": "text/csv; charset=utf-16le",

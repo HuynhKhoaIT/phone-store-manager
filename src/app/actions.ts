@@ -3,6 +3,7 @@
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { revalidatePath, revalidateTag } from "next/cache";
+import type { Prisma, Product } from "@prisma/client";
 import { TAGS } from "@/lib/cache";
 import { prisma } from "@/lib/db";
 import { BRANCH_COOKIE, getAllowedBranches, getCurrentBranch } from "@/lib/branch";
@@ -11,6 +12,7 @@ import { slugify } from "@/lib/slug";
 import { ADMIN_TASKS, periodKey } from "@/lib/admin-tasks";
 import { can, isPermission } from "@/lib/permissions";
 import { EXPENSE_CATEGORIES } from "@/lib/expenses";
+import { adjustQty, branchTwin, consumeBorrowed } from "@/lib/stock";
 import { RAM_OPTIONS, STORAGE_OPTIONS, isSingleUnit, productLabel } from "@/lib/product-labels";
 import {
   createSession,
@@ -276,14 +278,28 @@ export async function addTransaction(fd: FormData): Promise<ActionResult> {
     return { error: "Có bảo hành thì bắt buộc nhập tên và số điện thoại khách hàng." };
   if (customerPhone && !PHONE_RE.test(customerPhone)) return { error: "Số điện thoại không hợp lệ." };
 
-  // Bán sản phẩm chọn từ bảng giá: lưu giá nhập để tính lợi nhuận; điện thoại có mã thì đánh dấu đã bán
+  // Bán sản phẩm chọn từ bảng giá: lưu giá nhập để tính lợi nhuận; máy có IMEI thì đánh dấu đã bán, hàng khác trừ số lượng
   const productId = kind === "SALE" ? Number(str(fd, "productId")) || null : null;
   const product = productId ? await prisma.product.findUnique({ where: { id: productId } }) : null;
   const markSold = !!product && isSingleUnit(product);
   if (markSold && product.soldBranchId != null) return { error: "Máy này đã được bán trước đó." };
 
-  // Bán máy của chi nhánh khác (mượn hàng) → quán bán nợ quán sở hữu giá nhập, ghi vào sổ Mượn hàng
-  const borrowed = markSold && product.ownerBranchId != null && product.ownerBranchId !== found.shift.branchId;
+  // Quà tặng kèm (chỉ khi bán): phụ kiện trong hàng hoá, giá 0 đ, trừ số lượng; giá nhập cộng vào giá vốn giao dịch
+  const giftIds = kind === "SALE" ? fd.getAll("giftProductId").map((v) => Number(v) || 0) : [];
+  const giftQtys = fd.getAll("giftQty").map((v) => Number(v));
+  if (giftIds.some((id) => !id)) return { error: "Quà tặng phải chọn từ danh sách phụ kiện của cửa hàng." };
+  if (giftQtys.slice(0, giftIds.length).some((q) => !Number.isInteger(q) || q <= 0 || q > 99))
+    return { error: "Số lượng quà tặng không hợp lệ." };
+  const giftProducts = giftIds.length ? await prisma.product.findMany({ where: { id: { in: giftIds } } }) : [];
+  const gifts = giftIds.map((id, i) => ({ product: giftProducts.find((g) => g.id === id)!, qty: giftQtys[i] }));
+  if (gifts.some((g) => !g.product)) return { error: "Không tìm thấy quà tặng trong hàng hoá." };
+  if (gifts.some((g) => isSingleUnit(g.product))) return { error: "Máy có IMEI không tặng kèm được." };
+  const giftCost = gifts.reduce((s, g) => s + (g.product.costPrice ?? 0) * g.qty, 0);
+  const branchId = found.shift.branchId;
+  // Hàng (bán hoặc tặng) của quán khác → tự ghi sổ Mượn hàng
+  const borrowed = [product, ...gifts.map((g) => g.product)].some(
+    (p) => p && p.ownerBranchId != null && p.ownerBranchId !== branchId,
+  );
 
   await prisma.$transaction(async (db) => {
     const tx = await db.transaction.create({
@@ -292,7 +308,9 @@ export async function addTransaction(fd: FormData): Promise<ActionResult> {
         kind,
         productId: product?.id ?? null,
         costPrice: product?.costPrice ?? null,
-        productName,
+        giftCost,
+        // Chọn đúng gợi ý thì lưu tên chuẩn (gợi ý có thể kèm "(hàng quán khác)")
+        productName: product ? productLabel(product) : productName,
         price,
         paymentMethod,
         bankAccount,
@@ -300,37 +318,30 @@ export async function addTransaction(fd: FormData): Promise<ActionResult> {
         customerName,
         customerPhone: customerPhone?.replace(/[ .-]/g, "") ?? null,
         note: optional(fd, "note"),
+        gifts: {
+          create: gifts.map((g) => ({
+            productId: g.product.id,
+            productName: productLabel(g.product),
+            quantity: g.qty,
+            costPrice: g.product.costPrice,
+          })),
+        },
       },
     });
-    if (!markSold) return;
-    await db.product.update({
-      where: { id: product.id },
-      data: { soldBranchId: found.shift.branchId, soldAt: new Date() },
-    });
-    if (!borrowed) return;
-    const sale = { status: "SOLD", transactionId: tx.id, soldDate: found.shift.date, amount: product.costPrice ?? 0 };
-    // Đã ghi "đang mượn" trước đó thì cập nhật dòng đó; chưa ghi thì tự tạo
-    const open = await db.branchLoan.findFirst({
-      where: { productId: product.id, borrowerBranchId: found.shift.branchId, status: "BORROWED" },
-      orderBy: { id: "asc" },
-    });
-    if (open) await db.branchLoan.update({ where: { id: open.id }, data: sale });
-    else
-      await db.branchLoan.create({
-        data: {
-          ...sale,
-          productId: product.id,
-          productName: productLabel(product),
-          lenderBranchId: product.ownerBranchId!,
-          borrowerBranchId: found.shift.branchId,
-          date: found.shift.date,
-          note: "Tự ghi khi bán",
-          createdBy: me.name,
-        },
-      });
+    const borrow = { borrowerBranchId: branchId, date: found.shift.date, transactionId: tx.id, createdBy: me.name };
+    if (product) {
+      if (markSold)
+        await db.product.update({ where: { id: product.id }, data: { soldBranchId: branchId, soldAt: new Date() } });
+      else await adjustQty(db, product.id, -1);
+      await consumeBorrowed(db, { ...borrow, product, qty: 1, note: "Tự ghi khi bán" });
+    }
+    for (const g of gifts) {
+      await adjustQty(db, g.product.id, -g.qty);
+      await consumeBorrowed(db, { ...borrow, product: g.product, qty: g.qty, note: "Tự ghi khi tặng quà" });
+    }
   });
   if (borrowed) revalidatePath("/products/loans");
-  if (markSold) {
+  if (product || gifts.length) {
     revalidateTag(TAGS.prices);
     revalidatePath("/products");
   }
@@ -343,25 +354,27 @@ export async function deleteTransaction(id: number): Promise<ActionResult> {
   if (!me) return NOT_LOGGED_IN;
   // Chỉ admin được xoá giao dịch; nhân viên nhập sai thì báo admin xoá
   if (!isAdmin(me)) return NO_PERMISSION;
-  const tx = await prisma.transaction.findUnique({ where: { id } });
+  const tx = await prisma.transaction.findUnique({ where: { id }, include: { gifts: true } });
   if (!tx) return { error: "Không tìm thấy giao dịch." };
   const found = await getEditableShift(me, tx.shiftId);
   if ("error" in found) return { error: found.error };
   const product = tx.productId ? await prisma.product.findUnique({ where: { id: tx.productId } }) : null;
-  await prisma.$transaction([
-    // Huỷ bán máy mượn: dòng mượn hàng chưa thanh toán quay về "đang mượn" (máy vẫn đang ở quán mượn).
+  await prisma.$transaction(async (db) => {
+    // Huỷ bán / tặng hàng mượn: dòng mượn hàng chưa thanh toán quay về "đang mượn" (hàng vẫn ở quán mượn).
     // Đã thanh toán thì giữ nguyên để admin tự xử lý.
-    prisma.branchLoan.updateMany({
+    await db.branchLoan.updateMany({
       where: { transactionId: id, paidAt: null },
       data: { status: "BORROWED", transactionId: null, soldDate: null },
-    }),
-    prisma.transaction.delete({ where: { id } }),
-    // Xoá giao dịch bán máy có mã → máy trở lại "đang bán"
-    ...(product && isSingleUnit(product) && product.soldBranchId != null
-      ? [prisma.product.update({ where: { id: product.id }, data: { soldBranchId: null, soldAt: null } })]
-      : []),
-  ]);
-  if (product && isSingleUnit(product)) {
+    });
+    await db.transaction.delete({ where: { id } });
+    // Hoàn hàng: máy có mã trở lại "đang bán", hàng khác + quà tặng cộng lại số lượng
+    if (product && isSingleUnit(product)) {
+      if (product.soldBranchId != null)
+        await db.product.update({ where: { id: product.id }, data: { soldBranchId: null, soldAt: null } });
+    } else if (product) await adjustQty(db, product.id, 1);
+    for (const g of tx.gifts) if (g.productId) await adjustQty(db, g.productId, g.quantity);
+  });
+  if (product || tx.gifts.length) {
     revalidateTag(TAGS.prices);
     revalidatePath("/products", "layout");
   }
@@ -429,8 +442,10 @@ export async function addStockTransfer(fd: FormData): Promise<ActionResult> {
     return { error: "Chi nhánh gửi và nhận phải khác nhau." };
   if (unitCost != null && (!Number.isFinite(unitCost) || unitCost < 0)) return { error: "Giá nhập không hợp lệ." };
 
-  await prisma.$transaction([
-    prisma.stockTransfer.create({
+  if (product && isSingleUnit(product) && quantity !== 1) return { error: "Máy có IMEI chỉ nhập / chuyển 1 máy mỗi phiếu." };
+
+  await prisma.$transaction(async (db) => {
+    await db.stockTransfer.create({
       data: {
         type,
         date,
@@ -444,13 +459,13 @@ export async function addStockTransfer(fd: FormData): Promise<ActionResult> {
         staffName: me.name,
         note: optional(fd, "note"),
       },
-    }),
+    });
+    if (!product) return;
     // Phiếu nhập có giá nhập → cập nhật giá nhập mới nhất cho sản phẩm
-    ...(product && unitCost != null
-      ? [prisma.product.update({ where: { id: product.id }, data: { costPrice: unitCost } })]
-      : []),
-  ]);
-  if (product && unitCost != null) {
+    if (unitCost != null) await db.product.update({ where: { id: product.id }, data: { costPrice: unitCost } });
+    await moveStock(db, product, type, quantity, fromBranchId, toBranchId);
+  });
+  if (product) {
     revalidateTag(TAGS.prices);
     revalidatePath("/products");
   }
@@ -458,10 +473,49 @@ export async function addStockTransfer(fd: FormData): Promise<ActionResult> {
   return {};
 }
 
+/**
+ * Cập nhật số lượng theo phiếu (mỗi quán quản lý hàng riêng, xem lib/stock.ts):
+ * - Máy có IMEI: chuyển = đổi chi nhánh quản lý máy; nhập thì giữ nguyên (máy là 1 chiếc).
+ * - Hàng khác: nhập cộng vào mặt hàng của quán nhận; chuyển trừ quán gửi, cộng quán nhận (chưa có thì tạo).
+ * `sign = -1` để hoàn lại khi xoá phiếu.
+ */
+async function moveStock(
+  db: Prisma.TransactionClient,
+  product: Product,
+  type: string,
+  quantity: number,
+  fromBranchId: number | null,
+  toBranchId: number,
+  sign: 1 | -1 = 1,
+) {
+  if (isSingleUnit(product)) {
+    if (type === "TRANSFER")
+      await db.product.update({ where: { id: product.id }, data: { ownerBranchId: sign === 1 ? toBranchId : fromBranchId } });
+    return;
+  }
+  // Hàng chưa gắn chi nhánh: nhận về chi nhánh này luôn
+  if (product.ownerBranchId == null)
+    product = await db.product.update({ where: { id: product.id }, data: { ownerBranchId: fromBranchId ?? toBranchId } });
+  const to = await branchTwin(db, product, toBranchId, true);
+  if (to) await adjustQty(db, to.id, sign * quantity);
+  if (type === "TRANSFER" && fromBranchId) {
+    const from = await branchTwin(db, product, fromBranchId, true);
+    if (from) await adjustQty(db, from.id, -sign * quantity);
+  }
+}
+
 export async function deleteStockTransfer(id: number): Promise<ActionResult> {
   const me = await getSessionUser();
   if (!me || !isAdmin(me)) return NO_PERMISSION;
-  await prisma.stockTransfer.delete({ where: { id } });
+  const t = await prisma.stockTransfer.findUnique({ where: { id }, include: { product: true } });
+  if (!t) return { error: "Không tìm thấy phiếu." };
+  await prisma.$transaction(async (db) => {
+    await db.stockTransfer.delete({ where: { id } });
+    // Hoàn lại số lượng đã cộng / trừ khi tạo phiếu
+    if (t.product) await moveStock(db, t.product, t.type, t.quantity, t.fromBranchId, t.toBranchId, -1);
+  });
+  revalidateTag(TAGS.prices);
+  revalidatePath("/products");
   revalidatePath("/products/receipts");
   return {};
 }
@@ -495,6 +549,8 @@ export async function saveProduct(fd: FormData): Promise<ActionResult> {
   const brandId = category !== "IPHONE" ? Number(str(fd, "brandId")) || null : null;
   const soldBranchId = status === "SOLD" ? Number(str(fd, "soldBranchId")) || null : null;
   const ownerBranchId = Number(str(fd, "ownerBranchId")) || null;
+  // Máy có IMEI luôn là 1 chiếc; hàng khác nhập số lượng còn (kiểm kho)
+  const quantity = isPhone && code ? 1 : Number(str(fd, "quantity") || 0);
 
   if (!CATEGORIES.includes(category)) return { error: "Vui lòng chọn loại sản phẩm." };
   if (!name) return { error: "Vui lòng nhập tên sản phẩm." };
@@ -506,11 +562,14 @@ export async function saveProduct(fd: FormData): Promise<ActionResult> {
   if (batteryHealth != null && (!Number.isInteger(batteryHealth) || batteryHealth < 1 || batteryHealth > 100))
     return { error: "Tình trạng pin phải từ 1 đến 100%." };
   if (status === "SOLD" && !soldBranchId) return { error: "Đã bán thì phải chọn chi nhánh đã bán." };
+  if (!ownerBranchId) return { error: "Vui lòng chọn chi nhánh quản lý hàng này." };
+  if (!Number.isInteger(quantity) || quantity < 0) return { error: "Số lượng không hợp lệ." };
   if (ramGb != null && !RAM_OPTIONS.includes(ramGb)) return { error: "RAM không hợp lệ." };
   if (storageGb != null && !STORAGE_OPTIONS.includes(storageGb)) return { error: "Bộ nhớ không hợp lệ." };
   if (code) {
-    const dup = await prisma.product.findFirst({ where: { code, ...(id && { id: { not: id } }) } });
-    if (dup) return { error: `Mã này đã có trong bảng giá (${dup.name}).` };
+    // Mỗi quán quản lý hàng riêng: cùng mã vạch phụ kiện ở 2 quán là 2 dòng; trùng trong một quán thì báo
+    const dup = await prisma.product.findFirst({ where: { code, ownerBranchId, ...(id && { id: { not: id } }) } });
+    if (dup) return { error: `Mã này đã có trong hàng hoá của chi nhánh này (${dup.name}).` };
   }
 
   // Hiển thị trên web marketing
@@ -572,6 +631,7 @@ export async function saveProduct(fd: FormData): Promise<ActionResult> {
     // Giữ thời điểm bán cũ nếu vẫn là "đã bán"
     soldAt: soldBranchId ? (existing?.soldAt ?? new Date()) : null,
     ownerBranchId,
+    quantity,
   };
   if (id) await prisma.product.update({ where: { id }, data });
   else await prisma.product.create({ data });
