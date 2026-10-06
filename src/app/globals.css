@@ -75,6 +75,18 @@ body {
  * <td data-title> là dòng tiêu đề của thẻ (không có nhãn). Ô có nhiều phần tử con thì bọc trong 1 thẻ.
  * Ô không có data-label (vd nút Sửa/Xoá) căn phải, không nhãn.
  */
+/*
+ * Safari iPhone tự phóng to trang khi bấm vào ô nhập có chữ < 16px (.input dùng 14px).
+ * Điện thoại dùng 16px cho mọi ô nhập — không dùng maximum-scale=1 vì sẽ cấm người dùng tự phóng to.
+ */
+@media (max-width: 639px) {
+  input:not([type="checkbox"]):not([type="radio"]):not([type="hidden"]),
+  select,
+  textarea {
+    font-size: 16px;
+  }
+}
+
 @media (max-width: 639px) {
   .table thead {
     display: none;
