@@ -1,8 +1,12 @@
 "use client";
 
-import { useEffect, useRef, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useRef, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { ChevronLeft, Plus, X } from "lucide-react";
+
+/** Hàm đóng popup đang chứa form — ActionForm dùng cho nút Huỷ. null = không nằm trong popup. */
+const DialogContext = createContext<(() => void) | null>(null);
+export const useDialogClose = () => useContext(DialogContext);
 
 /**
  * Hộp thoại chứa form (kiểu Ant Design Modal). Trên điện thoại hiện toàn màn hình như một trang của app.
@@ -75,7 +79,9 @@ export function FormDialog({
             <X size={18} />
           </button>
         </div>
-        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-4 sm:max-h-[75vh] sm:px-5">{children}</div>
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-4 sm:max-h-[75vh] sm:px-5">
+          <DialogContext.Provider value={() => ref.current?.close()}>{children}</DialogContext.Provider>
+        </div>
       </dialog>
     </>
   );

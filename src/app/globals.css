@@ -152,6 +152,12 @@ html:has(dialog.form-dialog[open]) {
 .form-dialog {
   overscroll-behavior: contain;
 }
+/* Điện thoại: thanh nút Huỷ / Lưu ghim đáy màn hình — chừa chỗ để không che ô cuối */
+@media (max-width: 639px) {
+  .form-dialog:has(.dialog-footer) > div:last-child {
+    padding-bottom: calc(5.5rem + env(safe-area-inset-bottom));
+  }
+}
 .form-dialog::backdrop {
   background: rgb(0 0 0 / 0.45);
 }

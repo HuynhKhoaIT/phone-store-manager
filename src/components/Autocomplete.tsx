@@ -26,6 +26,7 @@ export function Autocomplete<T>({
   required,
   placeholder,
   ariaLabel,
+  className,
 }: {
   name?: string;
   value: string;
@@ -39,6 +40,8 @@ export function Autocomplete<T>({
   required?: boolean;
   placeholder?: string;
   ariaLabel?: string;
+  /** Class cho khung ngoài (vd `min-w-0 flex-1` khi đặt trong hàng flex) */
+  className?: string;
 }) {
   const listId = useId();
   const inputRef = useRef<HTMLInputElement>(null);
@@ -62,7 +65,7 @@ export function Autocomplete<T>({
   }
 
   return (
-    <div className="relative">
+    <div className={`relative ${className ?? ""}`}>
       <input
         ref={inputRef}
         name={name}

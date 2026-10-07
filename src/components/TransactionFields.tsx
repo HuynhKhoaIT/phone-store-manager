@@ -160,7 +160,7 @@ export function TransactionFields({
           Có bảo hành: bắt buộc nhập tên và số điện thoại khách để tra cứu sau này.
         </p>
       )}
-      {kind === "SALE" && <GiftList shiftId={shiftId} options={giftOptions} />}
+      {kind === "SALE" && <GiftList options={giftOptions} />}
       <label className="field sm:col-span-2">
         <span>Ghi chú</span>
         <input name="note" className="input" />
@@ -170,15 +170,15 @@ export function TransactionFields({
 }
 
 const suggestionLabel = (s: PriceSuggestion) => s.label;
+const giftMeta = (s: PriceSuggestion) => (s.quantity != null ? `Còn ${s.quantity}` : "");
 const suggestionMeta = (s: PriceSuggestion) => (s.price > 0 ? `${s.price.toLocaleString("vi-VN")} đ` : "Liên hệ");
 
 /**
  * Quà tặng kèm khi bán (sạc, tai nghe, ốp lưng, cường lực...): chọn phụ kiện của cửa hàng + số lượng.
  * Giá 0 đ; server trừ số lượng và cộng giá nhập vào giá vốn giao dịch. Chỉ nhận món chọn đúng trong danh sách.
  */
-function GiftList({ shiftId, options }: { shiftId: number; options: PriceSuggestion[] }) {
+function GiftList({ options }: { options: PriceSuggestion[] }) {
   const [rows, setRows] = useState<{ key: number; text: string; qty: number }[]>([]);
-  const listId = `gifts-${shiftId}`;
   const update = (key: number, patch: Partial<{ text: string; qty: number }>) =>
     setRows((r) => r.map((x) => (x.key === key ? { ...x, ...patch } : x)));
 
@@ -187,27 +187,22 @@ function GiftList({ shiftId, options }: { shiftId: number; options: PriceSuggest
       <legend className="flex items-center gap-1.5 px-1 text-sm font-medium text-slate-700">
         <Gift size={16} className="text-rose-500" aria-hidden /> Quà tặng kèm
       </legend>
-      <datalist id={listId}>
-        {options.map((o) => (
-          <option key={o.productId} value={o.label}>
-            {o.quantity != null ? `Còn ${o.quantity}` : ""}
-          </option>
-        ))}
-      </datalist>
       <div className="space-y-2">
         {rows.map((r) => {
           const match = options.find((o) => o.label === r.text);
           return (
             <div key={r.key}>
               <div className="flex items-center gap-2">
-                <input
-                  list={listId}
+                <Autocomplete
                   value={r.text}
-                  onChange={(e) => update(r.key, { text: e.target.value })}
-                  autoComplete="off"
-                  aria-label="Phụ kiện tặng"
-                  placeholder="Gõ để tìm phụ kiện..."
-                  className="input min-w-0 flex-1"
+                  onChange={(text) => update(r.key, { text })}
+                  onSelect={(o) => update(r.key, { text: o.label })}
+                  options={options}
+                  getLabel={suggestionLabel}
+                  renderMeta={giftMeta}
+                  ariaLabel="Phụ kiện tặng"
+                  placeholder="Gõ tên hoặc mã phụ kiện..."
+                  className="min-w-0 flex-1"
                 />
                 <input
                   type="number"

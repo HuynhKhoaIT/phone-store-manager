@@ -23,7 +23,7 @@ export default async function LoginPage() {
             <p className="mb-4 text-sm text-slate-500">
               Thiết lập lần đầu: tạo tài khoản admin và chi nhánh đầu tiên. Có thể thêm chi nhánh, nhân viên sau.
             </p>
-            <ActionForm action={setupFirstAdmin} submitLabel="Tạo tài khoản admin" className="grid gap-3">
+            <ActionForm action={setupFirstAdmin} submitLabel="Tạo tài khoản admin" submitAlign="start" className="grid gap-3">
               <label className="field">
                 <span>Họ tên</span>
                 <input name="name" required className="input" />
@@ -45,7 +45,7 @@ export default async function LoginPage() {
         ) : (
           <>
             <p className="mb-4 text-sm text-slate-500">Đăng nhập và chọn chi nhánh làm việc hôm nay.</p>
-            <ActionForm action={login} submitLabel="Đăng nhập" className="grid gap-3">
+            <ActionForm action={login} submitLabel="Đăng nhập" submitAlign="start" className="grid gap-3">
               <label className="field">
                 <span>Tên đăng nhập</span>
                 <input name="username" required autoCapitalize="none" autoComplete="username" className="input" />

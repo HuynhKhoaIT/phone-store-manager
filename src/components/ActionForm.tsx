@@ -4,6 +4,7 @@ import { useState, useTransition, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import type { ActionResult } from "@/app/actions";
 import { toast } from "./Toaster";
+import { useDialogClose } from "./FormDialog";
 
 /**
  * Form gọi server action. Giữ nguyên dữ liệu khi lỗi, tự xoá trắng khi thành công.
@@ -17,6 +18,7 @@ export function ActionForm({
   extraButtons,
   successMessage,
   redirectTo,
+  submitAlign = "end",
 }: {
   action: (fd: FormData) => Promise<ActionResult>;
   children: ReactNode;
@@ -27,8 +29,11 @@ export function ActionForm({
   successMessage?: string;
   /** Chuyển trang sau khi lưu thành công (vd: thoát chế độ sửa). */
   redirectTo?: string;
+  /** Vị trí nút lưu: mặc định bên phải (kiểu footer antd Modal); "start" cho form không phải lưu (đăng nhập) */
+  submitAlign?: "start" | "end";
 }) {
   const router = useRouter();
+  const closeDialog = useDialogClose();
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [seq, setSeq] = useState(0);
@@ -72,12 +77,31 @@ export function ActionForm({
         </p>
       )}
 
-      <div className="col-span-full flex flex-wrap items-center gap-2">
-        <button type="submit" disabled={pending} className="btn-primary">
-          {pending ? "Đang lưu..." : submitLabel}
-        </button>
-        {extraButtons}
-      </div>
+      {closeDialog ? (
+        // Trong popup: chân popup kiểu antd [Huỷ] [Lưu] bên phải, dính đáy khi cuộn.
+        // Điện thoại (popup toàn màn hình): thanh nút ghim đáy màn hình kiểu app — nút to, chia đôi.
+        // Chừa chỗ cho thanh này: .form-dialog:has(.dialog-footer) trong globals.css
+        <div className="dialog-footer z-10 col-span-full flex items-center gap-2 border-t border-slate-100 bg-white px-4 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] max-sm:fixed max-sm:inset-x-0 max-sm:bottom-0 max-sm:[&>button]:h-12 max-sm:[&>button]:flex-1 max-sm:[&>button]:text-base sm:sticky sm:bottom-0 sm:-mx-5 sm:-mb-4 sm:justify-end sm:px-5 sm:pb-3">
+          <button type="button" onClick={closeDialog} className="btn-secondary">
+            Huỷ
+          </button>
+          {extraButtons}
+          <button type="submit" disabled={pending} className="btn-primary">
+            {pending ? "Đang lưu..." : submitLabel}
+          </button>
+        </div>
+      ) : (
+        // Ngoài popup: điện thoại nút rộng hết khung (kiểu app); máy tính theo submitAlign
+        <div
+          className={`col-span-full flex flex-wrap items-center gap-2 max-sm:[&>button]:h-12 max-sm:[&>button]:flex-1 max-sm:[&>button]:text-base ${submitAlign === "end" ? "justify-end" : ""}`}
+        >
+          {submitAlign === "end" && extraButtons}
+          <button type="submit" disabled={pending} className="btn-primary">
+            {pending ? "Đang lưu..." : submitLabel}
+          </button>
+          {submitAlign === "start" && extraButtons}
+        </div>
+      )}
     </form>
   );
 }
