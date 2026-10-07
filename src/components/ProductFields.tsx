@@ -146,9 +146,10 @@ export function ProductFields({
       </label>
 
       <label className="field">
-        <span>{category === "ACCESSORY" ? "Mã sản phẩm / mã vạch" : "Mã máy (IMEI)"}</span>
+        <span>{category === "ACCESSORY" ? "Mã sản phẩm / mã vạch" : `Mã máy (IMEI)${isIphone ? " *" : ""}`}</span>
         <input
           name="code"
+          required={isIphone}
           defaultValue={product?.code ?? ""}
           maxLength={40}
           autoComplete="off"
@@ -159,11 +160,12 @@ export function ProductFields({
       {isIphone && (
         <>
           <label className="field">
-            <span>Tình trạng pin</span>
+            <span>Tình trạng pin *</span>
             <div className="relative">
               <input
                 name="batteryHealth"
                 type="number"
+                required
                 min={1}
                 max={100}
                 defaultValue={product?.batteryHealth ?? ""}

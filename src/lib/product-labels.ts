@@ -58,3 +58,10 @@ export function productLabel(p: {
     .filter(Boolean)
     .join(" ");
 }
+
+/** Nhãn trong ô gợi ý khi bán: "Tên - IMEI 3567…" (máy có IMEI) hoặc "Tên - Mã 8935…" (hàng khác có mã). */
+export function productPickLabel(p: Parameters<typeof productLabel>[0] & { category: string }) {
+  const name = productLabel({ ...p, code: null });
+  if (!p.code) return name;
+  return `${name} - ${isSingleUnit({ category: p.category, code: p.code }) ? "IMEI" : "Mã"} ${p.code}`;
+}

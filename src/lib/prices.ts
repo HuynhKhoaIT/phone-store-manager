@@ -1,7 +1,7 @@
 import { unstable_cache } from "next/cache";
 import { prisma } from "./db";
 import { CACHE_SECONDS, TAGS } from "./cache";
-import { isSingleUnit, productLabel } from "./product-labels";
+import { isSingleUnit, productPickLabel } from "./product-labels";
 import type { PriceSuggestion } from "@/components/TransactionFields";
 
 export { CATEGORY_LABEL, CONDITION_LABEL, STATUS_LABEL, productLabel, productStatus } from "./product-labels";
@@ -22,7 +22,8 @@ async function loadPriceSuggestions() {
     prisma.repairPrice.findMany({ orderBy: [{ device: "asc" }, { service: "asc" }] }),
   ]);
   const sale: PriceSuggestion[] = products.map((p) => ({
-    label: productLabel(p),
+    // Khi lưu, server lấy lại tên đầy đủ từ productId (productLabel) nên nhãn này chỉ để hiển thị / tìm kiếm
+    label: productPickLabel(p),
     price: p.price,
     warrantyMonths: p.warrantyMonths,
     productId: p.id,

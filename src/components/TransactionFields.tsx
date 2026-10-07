@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { Gift, Plus, X } from "lucide-react";
 import { MoneyInput } from "./MoneyInput";
+import { Autocomplete } from "./Autocomplete";
 
 export type PriceSuggestion = {
   label: string;
@@ -35,20 +36,31 @@ export function TransactionFields({
   const [payment, setPayment] = useState<"CASH" | "TRANSFER">("CASH");
   const [price, setPrice] = useState("");
   const [productId, setProductId] = useState("");
+  const [productName, setProductName] = useState("");
   const [warranty, setWarranty] = useState(0);
   const needCustomer = warranty > 0;
   const suggestions = kind === "REPAIR" ? repairSuggestions : saleSuggestions;
   const accountListId = `bank-accounts-${shiftId}`;
-  const productListId = `products-${shiftId}-${kind}`;
 
-  function onProductChange(name: string) {
-    const match = suggestions.find((s) => s.label === name);
-    // Chỉ giữ liên kết sản phẩm khi tên khớp đúng gợi ý (để đánh dấu máy có IMEI là đã bán)
-    setProductId(kind === "SALE" && match?.productId ? String(match.productId) : "");
-    if (match) {
-      setPrice(String(match.price));
-      if (match.warrantyMonths != null) setWarranty(match.warrantyMonths);
-    }
+  function selectSuggestion(match: PriceSuggestion) {
+    setProductName(match.label);
+    // Chỉ giữ liên kết sản phẩm khi chọn đúng gợi ý (để đánh dấu máy có IMEI là đã bán)
+    setProductId(kind === "SALE" && match.productId ? String(match.productId) : "");
+    setPrice(String(match.price));
+    if (match.warrantyMonths != null) setWarranty(match.warrantyMonths);
+  }
+
+  function onProductType(text: string) {
+    setProductName(text);
+    const match = suggestions.find((s) => s.label === text);
+    if (match) selectSuggestion(match);
+    else setProductId("");
+  }
+
+  function changeKind(k: "SALE" | "REPAIR") {
+    // Đổi loại thì gợi ý cũ không còn đúng danh sách
+    if (k !== kind) setProductId("");
+    setKind(k);
   }
 
   return (
@@ -62,7 +74,7 @@ export function TransactionFields({
         <Segmented
           label="Loại"
           value={kind}
-          onChange={setKind}
+          onChange={changeKind}
           options={[
             { value: "SALE", label: "Bán hàng" },
             { value: "REPAIR", label: "Sửa chữa" },
@@ -79,25 +91,24 @@ export function TransactionFields({
         />
       </div>
 
-      <label className="field sm:col-span-2">
+      <div className="field sm:col-span-2">
         <span>{kind === "REPAIR" ? "Nội dung sửa chữa *" : "Tên sản phẩm *"}</span>
-        <input
+        <Autocomplete
           name="productName"
           required
-          list={productListId}
-          autoComplete="off"
-          onChange={(e) => onProductChange(e.target.value)}
-          className="input"
-          placeholder={kind === "REPAIR" ? "Gõ để tìm trong bảng giá sửa chữa..." : "Gõ để tìm trong bảng giá..."}
+          value={productName}
+          onChange={onProductType}
+          onSelect={selectSuggestion}
+          options={suggestions}
+          getLabel={suggestionLabel}
+          renderMeta={suggestionMeta}
+          ariaLabel={kind === "REPAIR" ? "Nội dung sửa chữa" : "Tên sản phẩm"}
+          placeholder={kind === "REPAIR" ? "Gõ để tìm trong bảng giá sửa chữa..." : "Gõ tên, IMEI hoặc mã để tìm..."}
         />
-        <datalist id={productListId}>
-          {suggestions.map((s) => (
-            <option key={s.label} value={s.label}>
-              {s.price.toLocaleString("vi-VN")} đ
-            </option>
-          ))}
-        </datalist>
-      </label>
+        {kind === "SALE" && productName && !productId && (
+          <small className="text-amber-700">Không chọn từ danh sách hàng hoá — sẽ lưu theo tên đã gõ.</small>
+        )}
+      </div>
       <label className="field">
         <span>Giá tiền *</span>
         <MoneyInput name="price" required value={price} onChange={setPrice} />
@@ -157,6 +168,9 @@ export function TransactionFields({
     </>
   );
 }
+
+const suggestionLabel = (s: PriceSuggestion) => s.label;
+const suggestionMeta = (s: PriceSuggestion) => (s.price > 0 ? `${s.price.toLocaleString("vi-VN")} đ` : "Liên hệ");
 
 /**
  * Quà tặng kèm khi bán (sạc, tai nghe, ốp lưng, cường lực...): chọn phụ kiện của cửa hàng + số lượng.

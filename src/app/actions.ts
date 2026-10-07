@@ -557,6 +557,8 @@ export async function saveProduct(fd: FormData): Promise<ActionResult> {
   if (!Number.isFinite(price) || price <= 0) return { error: "Vui lòng nhập giá bán." };
   if (costPrice != null && (!Number.isFinite(costPrice) || costPrice < 0)) return { error: "Giá nhập không hợp lệ." };
   if (Number.isNaN(warrantyMonths)) return { error: "Bảo hành phải từ 0 đến 12 tháng." };
+  if (isIphone && !code) return { error: "iPhone bắt buộc nhập IMEI." };
+  if (isIphone && batteryHealth == null) return { error: "iPhone bắt buộc nhập tình trạng pin." };
   if (code && !/^[A-Za-z0-9._\-\/]{1,40}$/.test(code))
     return { error: "Mã sản phẩm tối đa 40 ký tự, chỉ gồm chữ, số và . _ - /" };
   if (batteryHealth != null && (!Number.isInteger(batteryHealth) || batteryHealth < 1 || batteryHealth > 100))

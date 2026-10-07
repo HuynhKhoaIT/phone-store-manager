@@ -145,6 +145,13 @@ body {
 }
 
 /* Hộp thoại form (FormDialog) */
+/* Popup đang mở: khoá cuộn trang phía sau, chỉ nội dung popup cuộn */
+html:has(dialog.form-dialog[open]) {
+  overflow: hidden;
+}
+.form-dialog {
+  overscroll-behavior: contain;
+}
 .form-dialog::backdrop {
   background: rgb(0 0 0 / 0.45);
 }

@@ -75,7 +75,7 @@ export function FormDialog({
             <X size={18} />
           </button>
         </div>
-        <div className="flex-1 overflow-y-auto px-4 py-4 sm:max-h-[75vh] sm:px-5">{children}</div>
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-4 sm:max-h-[75vh] sm:px-5">{children}</div>
       </dialog>
     </>
   );
