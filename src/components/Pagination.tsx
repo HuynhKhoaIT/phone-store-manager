@@ -26,7 +26,8 @@ export function Pagination({ paging, href }: { paging: Paging; href: (page: numb
       {/* Điện thoại */}
       <div className="space-y-2 sm:hidden">
         {page < pageCount && (
-          <Link href={href(page + 1)} scroll={false} className="btn-secondary h-11 w-full text-base">
+          // replace: "Xem thêm" không tạo mục lịch sử mới — bấm Quay lại về trang trước đó, không về trang 1
+          <Link href={href(page + 1)} scroll={false} replace className="btn-secondary h-11 w-full text-base">
             Xem thêm <ChevronDown size={18} aria-hidden />
           </Link>
         )}
