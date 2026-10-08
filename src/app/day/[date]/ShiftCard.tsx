@@ -171,6 +171,7 @@ export function ShiftCard({
                 </p>
               </div>
               <GiftLine gifts={t.gifts} />
+              <SimLine tx={t} />
               <div className="flex flex-wrap items-center gap-1.5 text-xs text-slate-500">
                 <span className="tabular-nums">{formatTimeVN(t.createdAt)}</span>
                 <KindBadge kind={t.kind} />
@@ -225,6 +226,7 @@ export function ShiftCard({
                   <td className="font-medium">
                     {t.productName}
                     <GiftLine gifts={t.gifts} />
+                    <SimLine tx={t} />
                   </td>
                   <td className="text-right font-semibold whitespace-nowrap tabular-nums">{formatVND(t.price)}</td>
                   {isAdmin && (
@@ -330,9 +332,30 @@ function Line({ label, value, bold }: { label: string; value: string; bold?: boo
 
 function KindBadge({ kind }: { kind: string }) {
   return (
-    <span className={`badge ${kind === "REPAIR" ? "bg-orange-100 text-orange-800" : "bg-blue-100 text-blue-800"}`}>
+    <span
+      className={`badge ${
+        kind === "REPAIR"
+          ? "bg-orange-100 text-orange-800"
+          : kind === "SIM"
+            ? "bg-cyan-100 text-cyan-800"
+            : "bg-blue-100 text-blue-800"
+      }`}
+    >
       {KIND_LABEL[kind]}
     </span>
+  );
+}
+
+/** Bán SIM: giá SIM + giá gói cước, serial */
+function SimLine({ tx }: { tx: Transaction }) {
+  if (tx.kind !== "SIM") return null;
+  const plan = tx.simPlanPrice ?? 0;
+  return (
+    <p className="text-xs font-normal text-slate-500">
+      SIM {formatVND(tx.price - plan)}
+      {plan > 0 && ` + gói cước ${formatVND(plan)}`}
+      {tx.simSerial && ` · Serial ${tx.simSerial}`}
+    </p>
   );
 }
 

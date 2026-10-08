@@ -39,7 +39,7 @@ export function TransactionFields({
   /** Bán trả góp qua công ty tài chính: chỉ bán hàng, nhập trả trước + công ty tài chính */
   installment?: boolean;
 }) {
-  const [kind, setKind] = useState<"SALE" | "REPAIR">("SALE");
+  const [kind, setKind] = useState<Kind>("SALE");
   const [downPayment, setDownPayment] = useState("");
   const [payment, setPayment] = useState<"CASH" | "TRANSFER">("CASH");
   const [price, setPrice] = useState("");
@@ -47,7 +47,7 @@ export function TransactionFields({
   const [productName, setProductName] = useState("");
   const [warranty, setWarranty] = useState(0);
   // Trả góp luôn cần thông tin khách (hợp đồng với công ty tài chính)
-  const needCustomer = installment || warranty > 0;
+  const needCustomer = installment || (kind !== "SIM" && warranty > 0);
   const financed = Math.max(0, Number(price || 0) - Number(downPayment || 0));
   // Trả góp không trả trước thì không có tiền vào → không cần chọn TM / CK
   const receivesMoney = !installment || Number(downPayment || 0) > 0;
@@ -70,7 +70,7 @@ export function TransactionFields({
     else setProductId("");
   }
 
-  function changeKind(k: "SALE" | "REPAIR") {
+  function changeKind(k: Kind) {
     // Đổi loại thì gợi ý cũ không còn đúng danh sách
     if (k !== kind) setProductId("");
     setKind(k);
@@ -93,12 +93,17 @@ export function TransactionFields({
             options={[
               { value: "SALE", label: "Bán hàng" },
               { value: "REPAIR", label: "Sửa chữa" },
+              { value: "SIM", label: "SIM" },
             ]}
           />
           <PaymentSegmented value={payment} onChange={setPayment} />
         </div>
       )}
 
+      {kind === "SIM" ? (
+        <SimFields />
+      ) : (
+      <>
       <div className="field sm:col-span-2">
         <span>{kind === "REPAIR" ? "Nội dung sửa chữa *" : "Tên sản phẩm *"}</span>
         <Autocomplete
@@ -127,6 +132,8 @@ export function TransactionFields({
         <span>{installment ? "Giá bán *" : "Giá tiền *"}</span>
         <MoneyInput name="price" required value={price} onChange={setPrice} />
       </label>
+      </>
+      )}
 
       {installment && (
         <>
@@ -186,6 +193,7 @@ export function TransactionFields({
         </label>
       )}
 
+      {kind !== "SIM" && (
       <label className="field">
         <span>Bảo hành</span>
         <select
@@ -201,6 +209,7 @@ export function TransactionFields({
           ))}
         </select>
       </label>
+      )}
       <label className="field">
         <span>Tên khách hàng{needCustomer && " *"}</span>
         <input name="customerName" required={needCustomer} className="input" />
@@ -221,6 +230,66 @@ export function TransactionFields({
         <span>Ghi chú</span>
         <input name="note" className="input" />
       </label>
+    </>
+  );
+}
+
+type Kind = "SALE" | "REPAIR" | "SIM";
+
+const SIM_CARRIERS = ["Viettel", "MobiFone", "Vinaphone", "Vietnamobile", "iTel", "Wintel", "Local"];
+
+/**
+ * Bán SIM: chọn số + đấu nối vẫn làm trên app nhà mạng, ở đây chỉ ghi nhận.
+ * Server tính giá giao dịch = giá SIM + giá gói cước, tên = "SIM <nhà mạng> <số>".
+ */
+function SimFields() {
+  const [simPrice, setSimPrice] = useState("");
+  const [planPrice, setPlanPrice] = useState("");
+  const total = Number(simPrice || 0) + Number(planPrice || 0);
+  return (
+    <>
+      <label className="field">
+        <span>Nhà mạng *</span>
+        <select name="simCarrier" required defaultValue="Viettel" className="input">
+          {SIM_CARRIERS.map((c) => (
+            <option key={c} value={c}>
+              {c}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label className="field">
+        <span>Số thuê bao *</span>
+        <input
+          name="simNumber"
+          required
+          type="tel"
+          inputMode="numeric"
+          autoComplete="off"
+          pattern="0[0-9 .\-]{9,12}"
+          title="10 chữ số, bắt đầu bằng 0"
+          className="input"
+          placeholder="VD: 0987 654 321"
+        />
+      </label>
+      <label className="field">
+        <span>Serial SIM</span>
+        <input name="simSerial" inputMode="numeric" autoComplete="off" className="input" placeholder="Số in trên SIM" />
+      </label>
+      <label className="field">
+        <span>Giá SIM *</span>
+        <MoneyInput name="simPrice" required value={simPrice} onChange={setSimPrice} />
+      </label>
+      <label className="field">
+        <span>Giá gói cước</span>
+        <MoneyInput name="simPlanPrice" value={planPrice} onChange={setPlanPrice} />
+      </label>
+      <div className="field">
+        <span>Tổng thu</span>
+        <p className="flex h-10 items-center rounded-md bg-blue-50 px-3 font-semibold text-blue-800 tabular-nums">
+          {total.toLocaleString("vi-VN")} đ
+        </p>
+      </div>
     </>
   );
 }
