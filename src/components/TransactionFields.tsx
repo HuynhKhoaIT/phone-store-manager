@@ -47,7 +47,9 @@ export function TransactionFields({
   const [productName, setProductName] = useState("");
   const [warranty, setWarranty] = useState(0);
   // Trả góp luôn cần thông tin khách (hợp đồng với công ty tài chính)
-  const needCustomer = installment || (kind !== "SIM" && warranty > 0);
+  // Bán SIM / nạp card: không bảo hành, không quà tặng
+  const isSim = kind === "SIM" || kind === "TOPUP";
+  const needCustomer = installment || (!isSim && warranty > 0);
   const financed = Math.max(0, Number(price || 0) - Number(downPayment || 0));
   // Trả góp không trả trước thì không có tiền vào → không cần chọn TM / CK
   const receivesMoney = !installment || Number(downPayment || 0) > 0;
@@ -88,7 +90,7 @@ export function TransactionFields({
         <div className="col-span-full flex flex-wrap gap-3">
           <Segmented
             label="Loại"
-            value={kind}
+            value={kind === "TOPUP" ? "SIM" : kind}
             onChange={changeKind}
             options={[
               { value: "SALE", label: "Bán hàng" },
@@ -100,8 +102,8 @@ export function TransactionFields({
         </div>
       )}
 
-      {kind === "SIM" ? (
-        <SimFields />
+      {isSim ? (
+        <SimFields mode={kind === "TOPUP" ? "TOPUP" : "SIM"} onModeChange={setKind} />
       ) : (
       <>
       <div className="field sm:col-span-2">
@@ -193,7 +195,7 @@ export function TransactionFields({
         </label>
       )}
 
-      {kind !== "SIM" && (
+      {!isSim && (
       <label className="field">
         <span>Bảo hành</span>
         <select
@@ -234,20 +236,35 @@ export function TransactionFields({
   );
 }
 
-type Kind = "SALE" | "REPAIR" | "SIM";
+type Kind = "SALE" | "REPAIR" | "SIM" | "TOPUP";
 
 const SIM_CARRIERS = ["Viettel", "MobiFone", "Vinaphone", "Vietnamobile", "iTel", "Wintel", "Local"];
 
+const TOPUP_AMOUNTS = [10000, 20000, 50000, 100000, 200000, 500000];
+
 /**
- * Bán SIM: chọn số + đấu nối vẫn làm trên app nhà mạng, ở đây chỉ ghi nhận.
- * Server tính giá giao dịch = giá SIM + giá gói cước, tên = "SIM <nhà mạng> <số>".
+ * Bán SIM / nạp card: chọn số + đấu nối, nạp tiền vẫn làm trên app nhà mạng, ở đây chỉ ghi nhận.
+ * Server tính giá: SIM = giá SIM + giá gói cước, nạp card = số tiền nạp. Cả hai không có lãi (giá vốn = giá thu).
  */
-function SimFields() {
+function SimFields({ mode, onModeChange }: { mode: "SIM" | "TOPUP"; onModeChange: (k: Kind) => void }) {
   const [simPrice, setSimPrice] = useState("");
   const [planPrice, setPlanPrice] = useState("");
+  const [amount, setAmount] = useState("");
   const total = Number(simPrice || 0) + Number(planPrice || 0);
+  const topup = mode === "TOPUP";
   return (
     <>
+      <div className="col-span-full">
+        <Segmented
+          label="Loại SIM"
+          value={mode}
+          onChange={onModeChange}
+          options={[
+            { value: "SIM", label: "Bán SIM" },
+            { value: "TOPUP", label: "Nạp card" },
+          ]}
+        />
+      </div>
       <label className="field">
         <span>Nhà mạng *</span>
         <select name="simCarrier" required defaultValue="Viettel" className="input">
@@ -258,38 +275,66 @@ function SimFields() {
           ))}
         </select>
       </label>
-      <label className="field">
-        <span>Số thuê bao *</span>
-        <input
-          name="simNumber"
-          required
-          type="tel"
-          inputMode="numeric"
-          autoComplete="off"
-          pattern="0[0-9 .\-]{9,12}"
-          title="10 chữ số, bắt đầu bằng 0"
-          className="input"
-          placeholder="VD: 0987 654 321"
-        />
-      </label>
-      <label className="field">
-        <span>Serial SIM</span>
-        <input name="simSerial" inputMode="numeric" autoComplete="off" className="input" placeholder="Số in trên SIM" />
-      </label>
-      <label className="field">
-        <span>Giá SIM *</span>
-        <MoneyInput name="simPrice" required value={simPrice} onChange={setSimPrice} />
-      </label>
-      <label className="field">
-        <span>Giá gói cước</span>
-        <MoneyInput name="simPlanPrice" value={planPrice} onChange={setPlanPrice} />
-      </label>
-      <div className="field">
-        <span>Tổng thu</span>
-        <p className="flex h-10 items-center rounded-md bg-blue-50 px-3 font-semibold text-blue-800 tabular-nums">
-          {total.toLocaleString("vi-VN")} đ
-        </p>
-      </div>
+      {!topup && (
+        <label className="field">
+          <span>Số thuê bao *</span>
+          <input
+            name="simNumber"
+            required
+            type="tel"
+            inputMode="numeric"
+            autoComplete="off"
+            className="input"
+            placeholder="VD: 0987 654 321"
+          />
+        </label>
+      )}
+      {topup ? (
+        <div className="field">
+          <span>Số tiền nạp *</span>
+          <MoneyInput name="topupAmount" required value={amount} onChange={setAmount} />
+          <div className="flex flex-wrap gap-1.5">
+            {TOPUP_AMOUNTS.map((a) => (
+              <button
+                key={a}
+                type="button"
+                onClick={() => setAmount(String(a))}
+                className={`rounded border px-2 py-0.5 text-xs tabular-nums ${
+                  amount === String(a)
+                    ? "border-[#1677ff] bg-blue-50 text-[#1677ff]"
+                    : "border-slate-200 text-slate-600 hover:border-slate-300"
+                }`}
+              >
+                {a / 1000}k
+              </button>
+            ))}
+          </div>
+        </div>
+      ) : (
+        <>
+          <label className="field">
+            <span>Serial SIM</span>
+            <input name="simSerial" inputMode="numeric" autoComplete="off" className="input" placeholder="Số in trên SIM" />
+          </label>
+          <label className="field">
+            <span>Giá SIM *</span>
+            <MoneyInput name="simPrice" required value={simPrice} onChange={setSimPrice} />
+          </label>
+          <label className="field">
+            <span>Giá gói cước</span>
+            <MoneyInput name="simPlanPrice" value={planPrice} onChange={setPlanPrice} />
+          </label>
+          <div className="field">
+            <span>Tổng thu</span>
+            <p className="flex h-10 items-center rounded-md bg-blue-50 px-3 font-semibold text-blue-800 tabular-nums">
+              {total.toLocaleString("vi-VN")} đ
+            </p>
+          </div>
+        </>
+      )}
+      <p className="col-span-full -mt-1 text-xs text-slate-500">
+        {topup ? "Nạp card" : "Bán SIM"} không tính lãi — chỉ ghi nhận tiền thu.
+      </p>
     </>
   );
 }

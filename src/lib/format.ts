@@ -64,7 +64,7 @@ export function formatMonth(month: string) {
   return `Tháng ${Number(m)}/${y}`;
 }
 
-export const KIND_LABEL: Record<string, string> = { SALE: "Bán hàng", REPAIR: "Sửa chữa", SIM: "SIM" };
+export const KIND_LABEL: Record<string, string> = { SALE: "Bán hàng", REPAIR: "Sửa chữa", SIM: "SIM", TOPUP: "Nạp card" };
 export const PAYMENT_LABEL: Record<string, string> = { CASH: "TM", TRANSFER: "CK" };
 
 /** Giờ của một thời điểm theo giờ Việt Nam, dạng HH:mm. */

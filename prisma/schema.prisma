@@ -84,7 +84,7 @@ model Transaction {
   id              Int                  @id @default(autoincrement())
   shiftId         Int
   shift           Shift                @relation(fields: [shiftId], references: [id], onDelete: Cascade)
-  kind            String // SALE | REPAIR | SIM
+  kind            String // SALE | REPAIR | SIM | TOPUP (nạp card)
   /// Sản phẩm trong bảng giá được chọn khi bán (để đánh dấu máy có mã là đã bán, lấy giá nhập)
   productId       Int?
   product         Product?             @relation(fields: [productId], references: [id], onDelete: SetNull)
@@ -110,7 +110,8 @@ model Transaction {
   financePaidAt   DateTime? // lúc đã thu đủ; null = còn chờ công ty tài chính trả
   financePayments InstallmentPayment[]
   /// --- Bán SIM (kind = SIM): chọn số + đấu nối vẫn làm trên app nhà mạng, ở đây chỉ ghi nhận ---
-  /// price = giá SIM + simPlanPrice (giá gói cước)
+  /// price = giá SIM + simPlanPrice (giá gói cước). Nạp card (kind = TOPUP): price = số tiền nạp (không lưu số điện thoại).
+  /// Cả hai không có lãi: costPrice = price
   simCarrier      String? // Viettel | MobiFone | Vinaphone | Vietnamobile...
   simNumber       String? // số thuê bao (đã bỏ khoảng trắng / dấu chấm / gạch)
   simSerial       String? // số serial in trên SIM

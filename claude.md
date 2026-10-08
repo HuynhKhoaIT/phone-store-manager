@@ -78,8 +78,8 @@ Giao diện (`src/components/AppShell.tsx`, danh sách menu dùng chung ở `src
 - *Chênh lệch* = `handoverCash` − tiền mặt phải có (âm = thiếu).
 
 **Giao dịch (`Transaction`)**
-- `kind`: `SALE` (bán hàng) | `REPAIR` (sửa chữa) | `SIM` (bán SIM)
-- **Bán SIM**: chọn số + đấu nối vẫn làm trên app nhà mạng (không có API công khai), ở đây chỉ ghi nhận `simCarrier`, `simNumber` (10 số), `simSerial`, `simPlanPrice`. `price` = giá SIM + giá gói cước, `productName` = "SIM <nhà mạng> <số>". Không bảo hành / quà tặng / trả góp; doanh thu tính vào nhóm Bán hàng
+- `kind`: `SALE` (bán hàng) | `REPAIR` (sửa chữa) | `SIM` (bán SIM) | `TOPUP` (nạp card)
+- **Bán SIM**: chọn số + đấu nối vẫn làm trên app nhà mạng (không có API công khai), ở đây chỉ ghi nhận `simCarrier`, `simNumber` (10 số), `simSerial`, `simPlanPrice`. `price` = giá SIM + giá gói cước, `productName` = "SIM <nhà mạng> <số>". **Nạp card** (`TOPUP`, cùng tab SIM): nhà mạng + `price` = số tiền nạp (không nhập SĐT). Không bảo hành / quà tặng / trả góp; doanh thu tính vào nhóm Bán hàng. **Không có lãi**: lưu `costPrice = price` nên lãi = 0 ở mọi nơi
 - `paymentMethod`: `CASH` (TM) | `TRANSFER` (CK). CK thì **bắt buộc** `bankAccount` (tài khoản nhận tiền).
 - `warrantyMonths` 0–12. **> 0 thì bắt buộc tên + SĐT khách** (để tra cứu bảo hành). SĐT được lưu đã bỏ khoảng trắng/dấu chấm/gạch.
 - Ngày hết bảo hành = ngày của ca + số tháng (`warrantyEnd` trong `lib/format.ts`, xử lý cuối tháng).

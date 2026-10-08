@@ -336,7 +336,7 @@ function KindBadge({ kind }: { kind: string }) {
       className={`badge ${
         kind === "REPAIR"
           ? "bg-orange-100 text-orange-800"
-          : kind === "SIM"
+          : kind === "SIM" || kind === "TOPUP"
             ? "bg-cyan-100 text-cyan-800"
             : "bg-blue-100 text-blue-800"
       }`}

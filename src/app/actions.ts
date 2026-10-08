@@ -282,12 +282,17 @@ export async function addTransaction(fd: FormData): Promise<ActionResult> {
   if ("error" in found) return { error: found.error };
 
   const rawKind = str(fd, "kind");
-  const kind = rawKind === "REPAIR" || rawKind === "SIM" ? rawKind : "SALE";
+  const kind = rawKind === "REPAIR" || rawKind === "SIM" || rawKind === "TOPUP" ? rawKind : "SALE";
   const paymentMethod = str(fd, "paymentMethod") === "TRANSFER" ? "TRANSFER" : "CASH";
   // Bán SIM: chọn số + đấu nối làm trên app nhà mạng, ở đây ghi nhận số thuê bao + giá SIM + giá gói cước
-  const sim = kind === "SIM" ? simFields(fd) : null;
+  // Nạp card: nhà mạng + số tiền nạp. Cả hai không có lãi: giá vốn = giá thu
+  const sim = kind === "SIM" ? simFields(fd) : kind === "TOPUP" ? topupFields(fd) : null;
   if (sim && "error" in sim) return { error: sim.error };
-  const productName = sim ? `SIM ${sim.simCarrier} ${sim.simNumber}` : str(fd, "productName");
+  const productName = sim
+    ? kind === "TOPUP"
+      ? `Nạp card ${sim.simCarrier}`
+      : `SIM ${sim.simCarrier} ${sim.simNumber}`
+    : str(fd, "productName");
   const price = sim ? sim.price : money(fd, "price");
   const bankAccount = paymentMethod === "TRANSFER" ? optional(fd, "bankAccount") : null;
   const warrantyMonths = sim ? 0 : warranty(fd);
@@ -301,7 +306,7 @@ export async function addTransaction(fd: FormData): Promise<ActionResult> {
   if (!productName)
     return { error: kind === "REPAIR" ? "Vui lòng nhập nội dung sửa chữa." : "Vui lòng nhập tên sản phẩm." };
   if (!Number.isFinite(price) || price <= 0)
-    return { error: sim ? "Giá SIM + gói cước phải lớn hơn 0." : "Vui lòng nhập giá tiền." };
+    return { error: kind === "SIM" ? "Giá SIM + gói cước phải lớn hơn 0." : "Vui lòng nhập giá tiền." };
   if (installment) {
     if (!financeCompany) return { error: "Vui lòng nhập công ty tài chính." };
     if (downPayment == null || !Number.isFinite(downPayment) || downPayment < 0)
@@ -347,7 +352,8 @@ export async function addTransaction(fd: FormData): Promise<ActionResult> {
         shiftId: found.shift.id,
         kind,
         productId: product?.id ?? null,
-        costPrice: product?.costPrice ?? null,
+        // SIM / nạp card thu hộ nhà mạng, không có lãi → giá vốn = giá thu
+        costPrice: sim ? price : (product?.costPrice ?? null),
         giftCost,
         // Chọn đúng gợi ý thì lưu tên chuẩn (gợi ý có thể kèm "(hàng quán khác)")
         productName: product ? productLabel(product) : productName,
@@ -412,6 +418,15 @@ function simFields(fd: FormData) {
   if (!Number.isFinite(simPrice) || simPrice < 0) return { error: "Vui lòng nhập giá SIM (không thu thì nhập 0)." };
   if (!Number.isFinite(simPlanPrice) || simPlanPrice < 0) return { error: "Giá gói cước không hợp lệ." };
   return { simCarrier, simNumber, simSerial, simPlanPrice, price: simPrice + simPlanPrice };
+}
+
+/** Đọc + kiểm tra phần nạp card: nhà mạng + số tiền nạp */
+function topupFields(fd: FormData) {
+  const simCarrier = str(fd, "simCarrier");
+  const price = money(fd, "topupAmount");
+  if (!simCarrier) return { error: "Vui lòng chọn nhà mạng." };
+  if (!Number.isFinite(price) || price <= 0) return { error: "Vui lòng nhập số tiền nạp." };
+  return { simCarrier, simNumber: null, simSerial: null, simPlanPrice: null, price };
 }
 
 export async function deleteTransaction(id: number): Promise<ActionResult> {
