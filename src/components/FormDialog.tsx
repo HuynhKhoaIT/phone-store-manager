@@ -3,6 +3,7 @@
 import { createContext, useContext, useEffect, useRef, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { ChevronLeft, Plus, X } from "lucide-react";
+import { previousUrl } from "./UrlHistory";
 
 /** Hàm đóng popup đang chứa form — ActionForm dùng cho nút Huỷ. null = không nằm trong popup. */
 const DialogContext = createContext<(() => void) | null>(null);
@@ -54,7 +55,14 @@ export function FormDialog({
       <dialog
         ref={ref}
         aria-label={title}
-        onClose={() => closeHref && router.push(closeHref)}
+        onClose={() => {
+          if (!closeHref) return;
+          // Vừa mở từ chính trang danh sách → quay lại (không để ?edit= nằm trong lịch sử, bấm Quay lại sẽ mở lại
+          // popup); mở thẳng link thì thay URL tại chỗ
+          const prev = previousUrl();
+          if (prev && prev.split("?")[0] === closeHref.split("?")[0]) router.back();
+          else router.replace(closeHref);
+        }}
         // Bấm ra ngoài (vùng nền) thì đóng
         onClick={(e) => e.target === e.currentTarget && e.currentTarget.close()}
         className="form-dialog m-auto w-full max-w-2xl flex-col rounded-lg bg-white p-0 text-slate-900 shadow-2xl open:flex max-sm:m-0 max-sm:h-dvh max-sm:max-h-none max-sm:max-w-none max-sm:rounded-none"

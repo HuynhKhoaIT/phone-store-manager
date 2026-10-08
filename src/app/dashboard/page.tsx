@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { prisma } from "@/lib/db";
 import { requirePermission } from "@/lib/auth";
+import { can } from "@/lib/permissions";
 import { getBranches } from "@/lib/branch";
 import { summarize } from "@/lib/summary";
 import { formatVND, todayVN } from "@/lib/format";
@@ -14,7 +15,9 @@ import { DailyRevenueChart, type DailyPoint } from "@/components/DailyRevenueCha
 type Search = { month?: string; from?: string; to?: string; branch?: string };
 
 export default async function DashboardPage({ searchParams }: { searchParams: Promise<Search> }) {
-  await requirePermission("dashboard");
+  const me = await requirePermission("dashboard");
+  // Lãi gộp lộ ra giá vốn → cần quyền "Giá nhập & lãi" (admin luôn có)
+  const canCost = can(me, "cost-prices");
   const sp = await searchParams;
   // Theo tháng (?month=) hoặc từ ngày đến ngày (?from=&to=)
   const period = getPeriod(sp, todayVN());
@@ -89,6 +92,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
           change={percentChange(cur.revenue, prev.revenue)}
           changeLabel={period.prevLabel}
         />
+        {canCost && (
         <StatCard
           label="Lãi gộp"
           value={formatVND(cur.gross)}
@@ -98,7 +102,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
           changeLabel={period.prevLabel}
           sub={
             <>
-              {cur.missingCost > 0 && `${cur.missingCost} giao dịch bán chưa có giá nhập · `}
+              {cur.missingCost > 0 && `${cur.missingCost} giao dịch chưa có giá vốn · `}
               <Link
                 href={`/reports?${new URLSearchParams({ ...keep, ...(branchId && { branch: String(branchId) }) })}`}
                 className="text-[#1677ff] hover:underline"
@@ -108,6 +112,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
             </>
           }
         />
+        )}
         <StatCard label="Bán hàng" value={formatVND(sum.sale)} sub={pct(sum.sale, sum.total)} />
         <StatCard label="Sửa chữa" value={formatVND(sum.repair)} sub={pct(sum.repair, sum.total)} />
         <StatCard

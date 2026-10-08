@@ -47,14 +47,27 @@ model User {
   role         String           @default("STAFF") // ADMIN | STAFF
   /// Chi nhánh được phép làm việc; để trống = làm được ở mọi chi nhánh
   branches     Branch[]         @relation("UserBranches")
-  /// Quyền của nhân viên (khoá trong src/lib/permissions.ts); admin bỏ qua, luôn toàn quyền.
-  /// Mặc định = quyền nhân viên có sẵn, để tài khoản cũ giữ nguyên khi thêm cột.
+  /// Quyền RIÊNG thêm cho nhân viên (khoá trong src/lib/permissions.ts), cộng với quyền của vai trò.
+  /// Admin bỏ qua, luôn toàn quyền. Mặc định = quyền nhân viên có sẵn, để tài khoản cũ giữ nguyên khi thêm cột.
   permissions  String[]         @default(["sell", "products", "repair-prices", "warranty", "timesheet"])
+  /// Vai trò (Bán hàng, Kế toán...) — quyền thực tế = quyền vai trò + `permissions`. null = chỉ quyền riêng
+  staffRoleId  Int?
+  staffRole    StaffRole?       @relation(fields: [staffRoleId], references: [id], onDelete: SetNull)
   active       Boolean          @default(true)
   createdAt    DateTime         @default(now())
   shifts       Shift[]
   checks       ChecklistCheck[]
   posts        Post[]
+}
+
+/// Vai trò nhân viên: một bộ quyền dùng chung (Bán hàng, Kế toán, Thủ kho...). Admin không thuộc vai trò nào.
+model StaffRole {
+  id          Int      @id @default(autoincrement())
+  name        String   @unique
+  description String?
+  permissions String[] @default([])
+  users       User[]
+  createdAt   DateTime @default(now())
 }
 
 /// Một ca làm việc của một nhân viên trong một ngày tại một chi nhánh.
@@ -114,7 +127,7 @@ model Transaction {
   /// Cả hai không có lãi: costPrice = price
   simCarrier      String? // Viettel | MobiFone | Vinaphone | Vietnamobile...
   simNumber       String? // số thuê bao (đã bỏ khoảng trắng / dấu chấm / gạch)
-  simSerial       String? // số serial in trên SIM
+  simSerial       String? // không còn nhập (đã bỏ khỏi form) — giữ cột để db push không xoá dữ liệu cũ
   simPlanPrice    Int? // giá gói cước đăng ký kèm (0 = không đăng ký)
   createdAt       DateTime             @default(now())
 
@@ -308,7 +321,12 @@ model RepairPrice {
   id        Int      @id @default(autoincrement())
   service   String // VD: Thay pin
   device    String // VD: iPhone 11
+  /// Loại linh kiện / chất lượng, VD "Zin bóc máy", "OLED", "Incell". Một dịch vụ × dòng máy có thể có nhiều loại
+  /// (nhiều dòng cùng service + device). null = chỉ có một mức giá
+  variant   String?
   price     Int // 0 = chưa có giá cố định, web hiện "Liên hệ"
+  /// Giá nhập linh kiện (chỉ admin thấy) — chụp vào Transaction.costPrice khi bán để tính lãi sửa chữa
+  costPrice Int?
   warranty  String? // VD: 6 tháng
   note      String?
   updatedAt DateTime @updatedAt

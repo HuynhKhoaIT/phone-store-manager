@@ -100,3 +100,11 @@ export function dateTimeLocalVN(d: Date) {
   const get = (t: string) => parts.find((p) => p.type === t)?.value ?? "00";
   return `${get("year")}-${get("month")}-${get("day")}T${get("hour") === "24" ? "00" : get("hour")}:${get("minute")}`;
 }
+
+/** "6 tháng" → 6, "1 năm" → 12 (tối đa 12, đúng giới hạn bảo hành giao dịch). Không đọc được → undefined */
+export function parseWarrantyMonths(text: string | null) {
+  const m = text?.match(/(\d+)\s*(tháng|th|năm|nam)/i);
+  if (!m) return undefined;
+  const months = /^n/i.test(m[2]) ? Number(m[1]) * 12 : Number(m[1]);
+  return Math.min(12, months);
+}

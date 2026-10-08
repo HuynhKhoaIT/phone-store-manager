@@ -63,7 +63,8 @@ export default async function DayPage({ params }: { params: Promise<{ date: stri
     shifts.flatMap((s) => s.financePayments),
   );
   // Lãi chỉ admin xem — cùng công thức Dashboard / Báo cáo
-  const dayProfit = isAdmin ? profitOf(shifts.flatMap((s) => s.transactions)) : null;
+  const canCost = can(me, "cost-prices");
+  const dayProfit = canCost ? profitOf(shifts.flatMap((s) => s.transactions)) : null;
   const hasOpenShift = shifts.some((s) => s.userId === me.id && !s.closedAt);
   // Chỉ nhân viên vào ca (admin chỉ xem / quản lý ca của nhân viên)
   const canOpenShift = !isAdmin && canSell && !hasOpenShift && date === today;
@@ -135,7 +136,7 @@ export default async function DayPage({ params }: { params: Promise<{ date: stri
           <Stat
             label="Lãi gộp ngày"
             value={formatVND(dayProfit.gross)}
-            sub={dayProfit.missingCost > 0 ? `${dayProfit.missingCost} giao dịch chưa có giá nhập` : "Chỉ admin thấy"}
+            sub={dayProfit.missingCost > 0 ? `${dayProfit.missingCost} giao dịch chưa có giá vốn` : "Chỉ admin thấy"}
             tone={dayProfit.gross >= 0 ? "text-green-700" : "text-red-600"}
           />
         )}
@@ -188,6 +189,7 @@ export default async function DayPage({ params }: { params: Promise<{ date: stri
           shift={s}
           canEdit={!s.closedAt && (isAdmin || (canSell && s.userId === me.id && date === today))}
           isAdmin={isAdmin}
+          canCost={canCost}
           defaultCheckOut={date === today ? nowTimeVN() : "21:00"}
           checklistLeft={checklistLeft}
           bankAccounts={bankAccounts}

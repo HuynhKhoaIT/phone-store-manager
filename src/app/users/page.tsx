@@ -3,6 +3,7 @@ import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { requireAdmin } from "@/lib/auth";
 import { getActiveBranches } from "@/lib/branch";
+import { getStaffRoles } from "@/lib/roles";
 import { saveUser } from "../actions";
 import { ActionForm } from "@/components/ActionForm";
 import { FormDialog } from "@/components/FormDialog";
@@ -16,7 +17,9 @@ type UserWithBranches = Prisma.UserGetPayload<{ include: { branches: { select: {
 export default async function UsersPage({ searchParams }: { searchParams: Promise<Search> }) {
   const me = await requireAdmin();
   const sp = await searchParams;
-  const branches = await getActiveBranches();
+  const [branches, roles] = await Promise.all([getActiveBranches(), getStaffRoles()]);
+  // Tài khoản mới mặc định vai trò bán hàng — không lấy vai trò đầu bảng (có thể là vai trò nhiều quyền)
+  const defaultRole = roles.find((r) => r.name === "Bán hàng");
   const branchFilter = branches.find((b) => b.id === Number(sp.branch));
 
   // Lọc theo chi nhánh: người được phân công ở đó + người làm được mọi chi nhánh
@@ -69,9 +72,29 @@ export default async function UsersPage({ searchParams }: { searchParams: Promis
       </label>
       <label className="field">
         <span>Vai trò</span>
-        <select name="role" defaultValue={editing?.role ?? "STAFF"} className="input">
-          <option value="STAFF">Nhân viên</option>
-          <option value="ADMIN">Admin</option>
+        {/* Admin = toàn quyền; vai trò = bộ quyền ở trang Phân quyền; "chỉ quyền riêng" = tick từng quyền */}
+        <select
+          name="role"
+          defaultValue={
+            editing?.role === "ADMIN"
+              ? "ADMIN"
+              : editing?.staffRoleId
+                ? `role:${editing.staffRoleId}`
+                : editing
+                  ? "STAFF"
+                  : defaultRole
+                    ? `role:${defaultRole.id}`
+                    : "STAFF"
+          }
+          className="input"
+        >
+          {roles.map((r) => (
+            <option key={r.id} value={`role:${r.id}`}>
+              {r.name}
+            </option>
+          ))}
+          <option value="STAFF">Nhân viên — chỉ quyền riêng</option>
+          <option value="ADMIN">Admin (toàn quyền)</option>
         </select>
       </label>
       <label className="field">
@@ -168,7 +191,7 @@ export default async function UsersPage({ searchParams }: { searchParams: Promis
                   <span
                     className={`badge ${u.role === "ADMIN" ? "bg-amber-100 text-amber-800" : "bg-slate-100 text-slate-700"}`}
                   >
-                    {u.role === "ADMIN" ? "Admin" : "Nhân viên"}
+                    {u.role === "ADMIN" ? "Admin" : (roles.find((r) => r.id === u.staffRoleId)?.name ?? "Nhân viên")}
                   </span>
                 </td>
                 <td data-label="Chi nhánh">

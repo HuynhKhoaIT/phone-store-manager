@@ -2,7 +2,9 @@ import Link from "next/link";
 import { Download, TriangleAlert } from "lucide-react";
 import type { Expense } from "@prisma/client";
 import { prisma } from "@/lib/db";
-import { requireAdmin } from "@/lib/auth";
+import { requireAnyPermission } from "@/lib/auth";
+import { can } from "@/lib/permissions";
+import { redirect } from "next/navigation";
 import { getActiveBranches, getBranches } from "@/lib/branch";
 import { EXPENSE_CATEGORIES } from "@/lib/expenses";
 import { addMonths, formatDate, formatMonth, formatVND, todayVN } from "@/lib/format";
@@ -38,7 +40,9 @@ function groupSum<T, K>(items: T[], key: (t: T) => K, value: (t: T) => number) {
 }
 
 export default async function ReportsPage({ searchParams }: { searchParams: Promise<Search> }) {
-  await requireAdmin();
+  const me = await requireAnyPermission("reports", "capital", "cost-prices");
+  // Không có quyền Báo cáo → vào thẳng tab được phép
+  if (!can(me, "reports")) redirect(can(me, "capital") ? "/reports/break-even" : "/reports/missing-cost");
   const sp = await searchParams;
   const today = todayVN();
   // Theo tháng (?month=) hoặc từ ngày đến ngày (?from=&to=); bảng 6 tháng lấy theo tháng của ngày cuối
@@ -274,8 +278,16 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
           {cur.missingCost > 0 && (
             <p>
               <TriangleAlert size={16} className="mr-1 inline align-text-bottom" aria-hidden />
-              {cur.missingCost} giao dịch bán chưa có giá nhập (bán ngoài bảng giá hoặc sản phẩm chưa nhập giá) — giá
-              vốn đang thiếu, lãi có thể cao hơn thực tế.
+              {cur.missingCost} giao dịch chưa có giá vốn (bán / sửa ngoài bảng giá hoặc chưa nhập giá) — lãi có thể
+              cao hơn thực tế.{" "}
+              {can(me, "cost-prices") && (
+                <Link
+                  href={`/reports/missing-cost?${new URLSearchParams({ ...keep, ...(branchId && { branch: String(branchId) }) })}`}
+                  className="font-medium underline"
+                >
+                  Nhập giá vốn
+                </Link>
+              )}
             </p>
           )}
           {branchId && sharedExpense > 0 && (

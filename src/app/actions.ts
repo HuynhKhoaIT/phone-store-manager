@@ -137,7 +137,10 @@ export async function saveUser(fd: FormData): Promise<ActionResult> {
   const name = str(fd, "name");
   const username = str(fd, "username").toLowerCase();
   const password = str(fd, "password");
-  const role = str(fd, "role") === "ADMIN" ? "ADMIN" : "STAFF";
+  // "ADMIN" | "STAFF" (chỉ quyền riêng) | "role:<id>" (vai trò)
+  const roleValue = str(fd, "role");
+  const role = roleValue === "ADMIN" ? "ADMIN" : "STAFF";
+  const staffRoleId = roleValue.startsWith("role:") ? Number(roleValue.slice(5)) || null : null;
   const active = str(fd, "active") !== "false";
   const branchIds = fd.getAll("branchIds").map(Number).filter(Number.isInteger);
 
@@ -151,14 +154,39 @@ export async function saveUser(fd: FormData): Promise<ActionResult> {
 
   const dup = await prisma.user.findUnique({ where: { username } });
   if (dup && dup.id !== id) return { error: "Tên đăng nhập đã tồn tại." };
+  if (staffRoleId && !(await prisma.staffRole.findUnique({ where: { id: staffRoleId } })))
+    return { error: "Vai trò không tồn tại." };
 
-  const data = { name, username, role, active, ...(password ? { passwordHash: hashPassword(password) } : {}) };
+  const data = {
+    name,
+    username,
+    role,
+    active,
+    staffRoleId: role === "ADMIN" ? null : staffRoleId,
+    ...(password ? { passwordHash: hashPassword(password) } : {}),
+  };
   const branches = branchIds.map((bid) => ({ id: bid }));
-  if (id) await prisma.user.update({ where: { id }, data: { ...data, branches: { set: branches } } });
+  // Đổi sang vai trò khác thì bỏ quyền riêng cũ (tài khoản cũ mang sẵn quyền bán hàng — kế toán không nên giữ)
+  const before = id ? await prisma.user.findUnique({ where: { id }, select: { staffRoleId: true } }) : null;
+  const roleChanged = !!before && data.staffRoleId != null && before.staffRoleId !== data.staffRoleId;
+  if (id)
+    await prisma.user.update({
+      where: { id },
+      data: { ...data, branches: { set: branches }, ...(roleChanged && { permissions: [] }) },
+    });
   else
-    await prisma.user.create({ data: { ...data, passwordHash: hashPassword(password), branches: { connect: branches } } });
+    await prisma.user.create({
+      data: {
+        ...data,
+        passwordHash: hashPassword(password),
+        branches: { connect: branches },
+        // Có vai trò thì quyền lấy từ vai trò, không thêm quyền riêng mặc định
+        ...(staffRoleId && { permissions: [] }),
+      },
+    });
   revalidateTag(TAGS.users);
   revalidatePath("/users");
+  revalidatePath("/permissions");
   return {};
 }
 
@@ -171,11 +199,51 @@ export async function saveUserPermissions(fd: FormData): Promise<ActionResult> {
   if (!user) return { error: "Không tìm thấy tài khoản." };
   if (user.role === "ADMIN") return { error: "Admin luôn có toàn quyền, không cần phân quyền." };
   // Chỉ nhận khoá quyền có trong danh sách — bỏ qua giá trị lạ gửi từ form
-  const permissions = [...new Set(fd.getAll("permissions").map(String).filter(isPermission))];
+  const staffRoleId = Number(str(fd, "staffRoleId")) || null;
+  const staffRole = staffRoleId ? await prisma.staffRole.findUnique({ where: { id: staffRoleId } }) : null;
+  if (staffRoleId && !staffRole) return { error: "Vai trò không tồn tại." };
+  // Quyền riêng = quyền tick thêm, bỏ những quyền vai trò đã có (đổi vai trò sau không bị dính quyền cũ)
+  const permissions = [...new Set(fd.getAll("permissions").map(String).filter(isPermission))].filter(
+    (p) => !staffRole?.permissions.includes(p),
+  );
 
-  await prisma.user.update({ where: { id: user.id }, data: { permissions } });
+  await prisma.user.update({ where: { id: user.id }, data: { permissions, staffRoleId: staffRole?.id ?? null } });
   revalidateTag(TAGS.users);
   revalidatePath("/", "layout");
+  return {};
+}
+
+/** Thêm / sửa vai trò (bộ quyền dùng chung). Chỉ nhận khoá quyền nhân viên — quyền chỉ-admin không có trong danh sách. */
+export async function saveStaffRole(fd: FormData): Promise<ActionResult> {
+  const me = await getSessionUser();
+  if (!me || !isAdmin(me)) return NO_PERMISSION;
+  const id = Number(str(fd, "id")) || null;
+  const name = str(fd, "name");
+  const permissions = [...new Set(fd.getAll("permissions").map(String).filter(isPermission))];
+  if (!name) return { error: "Vui lòng nhập tên vai trò." };
+  if (name.length > 40) return { error: "Tên vai trò tối đa 40 ký tự." };
+  if (!permissions.length) return { error: "Chọn ít nhất một quyền cho vai trò." };
+  const dup = await prisma.staffRole.findFirst({ where: { name: { equals: name, mode: "insensitive" } } });
+  if (dup && dup.id !== id) return { error: "Tên vai trò đã có." };
+
+  const data = { name, description: optional(fd, "description"), permissions };
+  if (id) await prisma.staffRole.update({ where: { id }, data });
+  else await prisma.staffRole.create({ data });
+  // Quyền của mọi người dùng vai trò này đổi theo → xoá cache phiên đăng nhập
+  revalidateTag(TAGS.users);
+  revalidatePath("/", "layout");
+  return {};
+}
+
+export async function deleteStaffRole(id: number): Promise<ActionResult> {
+  const me = await getSessionUser();
+  if (!me || !isAdmin(me)) return NO_PERMISSION;
+  const count = await prisma.user.count({ where: { staffRoleId: id } });
+  if (count > 0) return { error: `Đang có ${count} tài khoản dùng vai trò này — đổi vai trò cho họ trước khi xoá.` };
+  // Hết vai trò thì trang Phân quyền sẽ tạo lại vai trò mặc định — giữ lại ít nhất một
+  if ((await prisma.staffRole.count()) <= 1) return { error: "Cần giữ lại ít nhất một vai trò." };
+  await prisma.staffRole.delete({ where: { id } });
+  revalidatePath("/permissions");
   return {};
 }
 
@@ -325,6 +393,11 @@ export async function addTransaction(fd: FormData): Promise<ActionResult> {
 
   // Bán sản phẩm chọn từ bảng giá: lưu giá nhập để tính lợi nhuận; máy có IMEI thì đánh dấu đã bán, hàng khác trừ số lượng
   const productId = kind === "SALE" ? Number(str(fd, "productId")) || null : null;
+  // Sửa chữa chọn đúng loại trong bảng giá: chụp giá nhập linh kiện để tính lãi (client không biết giá nhập)
+  const repairPriceId = kind === "REPAIR" ? Number(str(fd, "repairPriceId")) || null : null;
+  const repairCost = repairPriceId
+    ? ((await prisma.repairPrice.findUnique({ where: { id: repairPriceId }, select: { costPrice: true } }))?.costPrice ?? null)
+    : null;
   const product = productId ? await prisma.product.findUnique({ where: { id: productId } }) : null;
   const markSold = !!product && isSingleUnit(product);
   if (markSold && product.soldBranchId != null) return { error: "Máy này đã được bán trước đó." };
@@ -353,7 +426,7 @@ export async function addTransaction(fd: FormData): Promise<ActionResult> {
         kind,
         productId: product?.id ?? null,
         // SIM / nạp card thu hộ nhà mạng, không có lãi → giá vốn = giá thu
-        costPrice: sim ? price : (product?.costPrice ?? null),
+        costPrice: sim ? price : (product?.costPrice ?? repairCost),
         giftCost,
         // Chọn đúng gợi ý thì lưu tên chuẩn (gợi ý có thể kèm "(hàng quán khác)")
         productName: product ? productLabel(product) : productName,
@@ -369,7 +442,6 @@ export async function addTransaction(fd: FormData): Promise<ActionResult> {
         downPayment,
         simCarrier: sim?.simCarrier ?? null,
         simNumber: sim?.simNumber ?? null,
-        simSerial: sim?.simSerial ?? null,
         simPlanPrice: sim?.simPlanPrice ?? null,
         gifts: {
           create: gifts.map((g) => ({
@@ -409,15 +481,13 @@ const SIM_NUMBER_RE = /^0\d{9}$/;
 function simFields(fd: FormData) {
   const simCarrier = str(fd, "simCarrier");
   const simNumber = str(fd, "simNumber").replace(/[ .-]/g, "");
-  const simSerial = str(fd, "simSerial").replace(/\s/g, "") || null;
   const simPrice = money(fd, "simPrice");
   const simPlanPrice = str(fd, "simPlanPrice") ? money(fd, "simPlanPrice") : 0;
   if (!simCarrier) return { error: "Vui lòng chọn nhà mạng." };
   if (!SIM_NUMBER_RE.test(simNumber)) return { error: "Số thuê bao phải gồm 10 chữ số, bắt đầu bằng 0." };
-  if (simSerial && !/^\d{6,20}$/.test(simSerial)) return { error: "Serial SIM chỉ gồm chữ số." };
   if (!Number.isFinite(simPrice) || simPrice < 0) return { error: "Vui lòng nhập giá SIM (không thu thì nhập 0)." };
   if (!Number.isFinite(simPlanPrice) || simPlanPrice < 0) return { error: "Giá gói cước không hợp lệ." };
-  return { simCarrier, simNumber, simSerial, simPlanPrice, price: simPrice + simPlanPrice };
+  return { simCarrier, simNumber, simPlanPrice, price: simPrice + simPlanPrice };
 }
 
 /** Đọc + kiểm tra phần nạp card: nhà mạng + số tiền nạp */
@@ -426,7 +496,7 @@ function topupFields(fd: FormData) {
   const price = money(fd, "topupAmount");
   if (!simCarrier) return { error: "Vui lòng chọn nhà mạng." };
   if (!Number.isFinite(price) || price <= 0) return { error: "Vui lòng nhập số tiền nạp." };
-  return { simCarrier, simNumber: null, simSerial: null, simPlanPrice: null, price };
+  return { simCarrier, simNumber: null, simPlanPrice: null, price };
 }
 
 export async function deleteTransaction(id: number): Promise<ActionResult> {
@@ -466,6 +536,46 @@ export async function deleteTransaction(id: number): Promise<ActionResult> {
   }
   if (tx.financeCompany) revalidatePath("/installments");
   revalidatePath(`/day/${found.shift.date}`);
+  return {};
+}
+
+/**
+ * Nhập giá vốn cho giao dịch chưa có giá nhập (bán gõ tay, sản phẩm chưa nhập giá, sửa chữa gõ tay).
+ * Mặc định chỉ áp dụng cho đơn này. Đơn có gắn sản phẩm chưa có giá nhập + tick `updateProduct` → lưu luôn
+ * vào `Product.costPrice` và điền cho các đơn khác của sản phẩm đó còn thiếu giá vốn.
+ */
+export async function setTransactionCost(fd: FormData): Promise<ActionResult> {
+  const me = await getSessionUser();
+  if (!me || !can(me, "cost-prices")) return NO_PERMISSION;
+  const tx = await prisma.transaction.findUnique({
+    where: { id: Number(str(fd, "id")) || 0 },
+    include: { product: { select: { id: true, costPrice: true } }, shift: { select: { date: true } } },
+  });
+  if (!tx || (tx.kind !== "SALE" && tx.kind !== "REPAIR")) return { error: "Không tìm thấy giao dịch." };
+  // Chỉ bổ sung giá vốn còn thiếu — không sửa giá vốn đã chụp lúc bán (ảnh hưởng báo cáo / chia lãi đã chốt)
+  if (tx.costPrice != null) return { error: "Giao dịch này đã có giá vốn." };
+  const costPrice = money(fd, "costPrice");
+  if (!Number.isFinite(costPrice) || costPrice < 0) return { error: "Vui lòng nhập giá vốn (không tốn gì thì nhập 0)." };
+  const updateProduct = str(fd, "updateProduct") === "1" && tx.product != null && tx.product.costPrice == null;
+
+  // Hai người nhập cùng lúc: chỉ lần đầu được ghi
+  const filled = await prisma.$transaction(async (db) => {
+    const res = await db.transaction.updateMany({ where: { id: tx.id, costPrice: null }, data: { costPrice } });
+    if (res.count === 0) return false;
+    if (updateProduct) {
+      await db.product.update({ where: { id: tx.product!.id }, data: { costPrice } });
+      await db.transaction.updateMany({ where: { productId: tx.product!.id, costPrice: null }, data: { costPrice } });
+    }
+    return true;
+  });
+  if (!filled) return { error: "Giao dịch này đã có giá vốn." };
+  if (updateProduct) {
+    revalidateTag(TAGS.prices);
+    revalidatePath("/products");
+  }
+  revalidatePath("/reports", "layout");
+  revalidatePath("/dashboard");
+  revalidatePath(`/day/${tx.shift.date}`);
   return {};
 }
 
@@ -535,7 +645,7 @@ export async function recordInstallmentPayment(fd: FormData): Promise<ActionResu
 /** Xoá một lần thu trả góp (ghi nhầm) — chỉ admin; ca nhận tiền đã chốt thì phải mở lại ca trước. */
 export async function deleteInstallmentPayment(id: number): Promise<ActionResult> {
   const me = await getSessionUser();
-  if (!me || !isAdmin(me)) return NO_PERMISSION;
+  if (!me || !can(me, "installments-manage")) return NO_PERMISSION;
   const payment = await prisma.installmentPayment.findUnique({
     where: { id },
     include: { shift: { select: { closedAt: true, date: true } } },
@@ -593,8 +703,8 @@ export async function addStockTransfer(fd: FormData): Promise<ActionResult> {
   const quantity = Number(str(fd, "quantity"));
   const toBranchId = Number(str(fd, "toBranchId"));
   const fromBranchId = type === "TRANSFER" ? Number(str(fd, "fromBranchId")) : null;
-  // Giá nhập chỉ admin nhập/xem
-  const unitCostRaw = isAdmin(me) && type === "IMPORT" ? str(fd, "unitCost") : "";
+  // Giá nhập chỉ người có quyền Giá nhập & lãi nhập/xem
+  const unitCostRaw = can(me, "cost-prices") && type === "IMPORT" ? str(fd, "unitCost") : "";
   const unitCost = unitCostRaw ? money(fd, "unitCost") : null;
 
   // Sản phẩm chọn từ danh sách hàng hoá (hoặc tên gõ tự do nếu chưa có trong danh sách)
@@ -821,32 +931,108 @@ export async function deleteProduct(id: number): Promise<ActionResult> {
   return {};
 }
 
+/**
+ * Lưu bảng giá sửa chữa theo nhóm dịch vụ × dòng máy, mỗi nhóm nhiều loại linh kiện (Zin, OLED, Incell...).
+ * - Thêm mới: "Dòng máy" nhập được nhiều máy cách nhau dấu phẩy → mỗi máy nhận cùng danh sách loại.
+ * - Sửa (`groupOf` = id một dòng trong nhóm): cập nhật dòng có id, thêm dòng mới, xoá dòng bị bỏ khỏi form.
+ */
 export async function saveRepairPrice(fd: FormData): Promise<ActionResult> {
   const me = await getSessionUser();
   if (!me || !isAdmin(me)) return NO_PERMISSION;
 
-  const id = Number(str(fd, "id")) || null;
   const service = str(fd, "service");
-  const device = str(fd, "device");
-  // Để trống giá = giá thay đổi theo linh kiện / thị trường → web hiện "Liên hệ"
-  const price = str(fd, "price") ? money(fd, "price") : 0;
+  const devices = [...new Set(str(fd, "device").split(",").map((d) => d.trim()).filter(Boolean))];
+  const groupOf = Number(str(fd, "groupOf")) || null;
+  const all = (key: string) => fd.getAll(key).map((v) => (typeof v === "string" ? v.trim() : ""));
+  const ids = all("variantId");
+  const names = all("variant");
+  const prices = all("price");
+  const costs = all("costPrice");
+  const warranties = all("warranty");
+  const notes = all("note");
+  const rows = names.map((name, i) => ({
+    id: Number(ids[i]) || null,
+    variant: name || null,
+    // Để trống giá = giá thay đổi theo linh kiện / thị trường → web hiện "Liên hệ"
+    price: prices[i] ? Number(prices[i].replace(/\D/g, "")) : 0,
+    costPrice: costs[i] ? Number(costs[i].replace(/\D/g, "")) : null,
+    // Ô chọn 0–12 tháng; lưu dạng "6 tháng" (API web trả nguyên chuỗi)
+    warranty: Number(warranties[i]) > 0 ? `${Number(warranties[i])} tháng` : null,
+    note: notes[i] || null,
+  }));
 
   if (!service) return { error: "Vui lòng nhập dịch vụ (VD: Thay pin)." };
-  if (!device) return { error: "Vui lòng nhập dòng máy." };
-  if (!Number.isFinite(price) || price < 0) return { error: "Giá không hợp lệ." };
+  if (!devices.length) return { error: "Vui lòng nhập dòng máy." };
+  if (groupOf && devices.length > 1) return { error: "Khi sửa chỉ nhập một dòng máy." };
+  if (!rows.length) return { error: "Cần ít nhất một mức giá." };
+  if (rows.some((r) => !Number.isFinite(r.price) || r.price < 0)) return { error: "Giá không hợp lệ." };
+  if (warranties.some((w) => w && !(Number.isInteger(Number(w)) && Number(w) >= 0 && Number(w) <= 12)))
+    return { error: "Bảo hành phải từ 0 đến 12 tháng." };
+  if (rows.some((r) => r.costPrice != null && (!Number.isFinite(r.costPrice) || r.costPrice < 0)))
+    return { error: "Giá nhập không hợp lệ." };
+  if (rows.length > 1 && rows.some((r) => !r.variant))
+    return { error: "Có nhiều mức giá thì mỗi dòng phải ghi loại linh kiện (VD: Zin, OLED, Incell)." };
+  const variantKeys = rows.map((r) => r.variant?.toLowerCase());
+  if (new Set(variantKeys).size !== variantKeys.length) return { error: "Loại linh kiện bị trùng tên." };
 
-  const data = { service, device, price, warranty: optional(fd, "warranty"), note: optional(fd, "note") };
-  if (id) await prisma.repairPrice.update({ where: { id }, data });
-  else await prisma.repairPrice.create({ data });
+  if (groupOf) {
+    const anchor = await prisma.repairPrice.findUnique({ where: { id: groupOf } });
+    if (!anchor) return { error: "Không tìm thấy giá sửa chữa." };
+    const existing = await prisma.repairPrice.findMany({
+      where: { service: anchor.service, device: anchor.device },
+      select: { id: true },
+    });
+    const existingIds = new Set(existing.map((e) => e.id));
+    if (rows.some((r) => r.id && !existingIds.has(r.id))) return { error: "Dữ liệu không khớp, vui lòng tải lại trang." };
+    // Đổi tên dịch vụ / máy trùng một nhóm khác thì chặn (không gộp ngầm hai nhóm)
+    const clash = await prisma.repairPrice.findFirst({
+      where: { service, device: devices[0], id: { notIn: [...existingIds] } },
+      select: { id: true },
+    });
+    if (clash) return { error: `"${service} ${devices[0]}" đã có trong bảng giá — sửa nhóm đó thay vì đổi tên trùng.` };
+    const kept = new Set(rows.map((r) => r.id).filter(Boolean));
+    await prisma.$transaction([
+      prisma.repairPrice.deleteMany({ where: { id: { in: [...existingIds].filter((id) => !kept.has(id)) } } }),
+      ...rows.map(({ id, ...r }) => {
+        const data = { ...r, service, device: devices[0] };
+        return id ? prisma.repairPrice.update({ where: { id }, data }) : prisma.repairPrice.create({ data });
+      }),
+    ]);
+  } else {
+    // Máy đã có dịch vụ này thì không thêm chồng (tránh trùng nhóm) — sửa nhóm cũ thay vì thêm
+    const dup = await prisma.repairPrice.findFirst({
+      where: { service, device: { in: devices } },
+      select: { device: true },
+    });
+    if (dup) return { error: `"${service} ${dup.device}" đã có trong bảng giá — bấm Sửa ở dòng đó để thêm loại.` };
+    await prisma.repairPrice.createMany({
+      data: devices.flatMap((device) => rows.map(({ id: _id, ...r }) => ({ ...r, service, device }))),
+    });
+    // Thêm từ trang Thiếu giá vốn: một loại có giá nhập → điền luôn giá vốn cho đơn sửa chữa gốc
+    const txId = Number(str(fd, "transactionId")) || null;
+    if (txId && rows.length === 1 && rows[0].costPrice != null) {
+      await prisma.transaction.updateMany({
+        where: { id: txId, kind: "REPAIR", costPrice: null },
+        data: { costPrice: rows[0].costPrice },
+      });
+      const tx = await prisma.transaction.findUnique({ where: { id: txId }, select: { shift: { select: { date: true } } } });
+      if (tx) revalidatePath(`/day/${tx.shift.date}`);
+      revalidatePath("/reports", "layout");
+      revalidatePath("/dashboard");
+    }
+  }
   revalidateTag(TAGS.prices);
   revalidatePath("/repair-prices");
   return {};
 }
 
-export async function deleteRepairPrice(id: number): Promise<ActionResult> {
+/** Xoá cả dòng máy (mọi loại linh kiện của cùng dịch vụ × dòng máy) */
+export async function deleteRepairGroup(id: number): Promise<ActionResult> {
   const me = await getSessionUser();
   if (!me || !isAdmin(me)) return NO_PERMISSION;
-  await prisma.repairPrice.delete({ where: { id } });
+  const anchor = await prisma.repairPrice.findUnique({ where: { id } });
+  if (!anchor) return { error: "Không tìm thấy giá sửa chữa." };
+  await prisma.repairPrice.deleteMany({ where: { service: anchor.service, device: anchor.device } });
   revalidateTag(TAGS.prices);
   revalidatePath("/repair-prices");
   return {};
@@ -1151,7 +1337,7 @@ export async function deletePromotion(id: number): Promise<ActionResult> {
 
 export async function saveExpense(fd: FormData): Promise<ActionResult> {
   const me = await getSessionUser();
-  if (!me || !isAdmin(me)) return NO_PERMISSION;
+  if (!me || !can(me, "reports")) return NO_PERMISSION;
 
   const id = Number(str(fd, "id")) || null;
   const date = str(fd, "date");
@@ -1174,7 +1360,7 @@ export async function saveExpense(fd: FormData): Promise<ActionResult> {
 
 export async function deleteExpense(id: number): Promise<ActionResult> {
   const me = await getSessionUser();
-  if (!me || !isAdmin(me)) return NO_PERMISSION;
+  if (!me || !can(me, "reports")) return NO_PERMISSION;
   await prisma.expense.delete({ where: { id } });
   revalidatePath("/reports");
   return {};
@@ -1184,7 +1370,7 @@ export async function deleteExpense(id: number): Promise<ActionResult> {
 
 export async function saveInvestor(fd: FormData): Promise<ActionResult> {
   const me = await getSessionUser();
-  if (!me || !isAdmin(me)) return NO_PERMISSION;
+  if (!me || !can(me, "capital")) return NO_PERMISSION;
 
   const id = Number(str(fd, "id")) || null;
   const name = str(fd, "name");
@@ -1201,7 +1387,7 @@ export async function saveInvestor(fd: FormData): Promise<ActionResult> {
 
 export async function saveCapitalEntry(fd: FormData): Promise<ActionResult> {
   const me = await getSessionUser();
-  if (!me || !isAdmin(me)) return NO_PERMISSION;
+  if (!me || !can(me, "capital")) return NO_PERMISSION;
 
   const id = Number(str(fd, "id")) || null;
   const type = str(fd, "type") === "WITHDRAW" ? "WITHDRAW" : "CONTRIBUTE";
@@ -1227,7 +1413,7 @@ export async function saveCapitalEntry(fd: FormData): Promise<ActionResult> {
 
 export async function deleteCapitalEntry(id: number): Promise<ActionResult> {
   const me = await getSessionUser();
-  if (!me || !isAdmin(me)) return NO_PERMISSION;
+  if (!me || !can(me, "capital")) return NO_PERMISSION;
   await prisma.capitalEntry.delete({ where: { id } });
   revalidatePath("/reports", "layout");
   revalidatePath("/branches");
@@ -1293,7 +1479,8 @@ export async function setLoanStatus(id: number, action: "return" | "sold" | "pai
   const me = await getSessionUser();
   if (!me) return NOT_LOGGED_IN;
   if (!can(me, "products")) return NO_PERMISSION;
-  if ((action === "paid" || action === "unpaid") && !isAdmin(me)) return NO_PERMISSION;
+  // Thanh toán mượn hàng = trả giá nhập → cần quyền Giá nhập & lãi
+  if ((action === "paid" || action === "unpaid") && !can(me, "cost-prices")) return NO_PERMISSION;
   const loan = await prisma.branchLoan.findUnique({ where: { id } });
   if (!loan) return { error: "Không tìm thấy." };
 

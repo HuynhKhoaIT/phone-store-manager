@@ -4,6 +4,7 @@ import { BatteryMedium, Globe, Headphones, Search, Smartphone, TabletSmartphone 
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { requirePermission } from "@/lib/auth";
+import { can } from "@/lib/permissions";
 import { getActiveBranches, getCurrentBranch } from "@/lib/branch";
 import {
   CATEGORY_LABEL,
@@ -44,6 +45,10 @@ const STATUS_BADGE: Record<ProductStatus, string> = {
 export default async function PricesPage({ searchParams }: { searchParams: Promise<Search> }) {
   const me = await requirePermission("products");
   const isAdmin = me.role === "ADMIN";
+  // Giá nhập + lãi: admin hoặc nhân viên có quyền "Giá nhập & lãi" (kế toán)
+  const canCost = can(me, "cost-prices");
+  // Nhân viên chỉ xem thông tin sản phẩm; thống kê (đang bán, đã bán, giá trị hàng) cần quyền riêng
+  const showStats = can(me, "product-stats");
   const sp = await searchParams;
   const cat = sp.cat && CATEGORY_LABEL[sp.cat] ? sp.cat : "";
   const cond = sp.cond === "NEW" || sp.cond === "USED" ? sp.cond : "";
@@ -121,13 +126,15 @@ export default async function PricesPage({ searchParams }: { searchParams: Promi
   // Thống kê (theo chi nhánh + loại hàng đang chọn). Giá trị = giá × số lượng còn
   const catWhere: Prisma.ProductWhereInput = { AND: [branchWhere], ...(cat && { category: cat }) };
   const monthStart = new Date(`${today.slice(0, 7)}-01T00:00:00+07:00`);
-  const [stock, soldThisMonth] = await Promise.all([
-    prisma.product.findMany({
-      where: { ...STATUS_WHERE.AVAILABLE, ...catWhere },
-      select: { category: true, price: true, salePrice: true, costPrice: true, quantity: true },
-    }),
-    prisma.product.count({ where: { ...catWhere, soldAt: { gte: monthStart } } }),
-  ]);
+  const [stock, soldThisMonth] = showStats
+    ? await Promise.all([
+        prisma.product.findMany({
+          where: { ...STATUS_WHERE.AVAILABLE, ...catWhere },
+          select: { category: true, price: true, salePrice: true, costPrice: true, quantity: true },
+        }),
+        prisma.product.count({ where: { ...catWhere, soldAt: { gte: monthStart } } }),
+      ])
+    : [[], 0];
   const inStock = stock.filter((p) => p.quantity > 0);
   const withCost = inStock.filter((p) => p.costPrice != null);
   const availableAgg = {
@@ -184,11 +191,13 @@ export default async function PricesPage({ searchParams }: { searchParams: Promi
       <ProductsTabs active="list" />
 
       {/* Điện thoại: một dải thống kê gọn; máy tính: các thẻ riêng */}
+      {showStats && (
+      <>
       <div className="card grid grid-cols-3 divide-x divide-slate-100 p-0 sm:hidden">
         <MiniStat label="Đang bán" value={String(availableAgg._count)} />
         <MiniStat label="Bán tháng này" value={String(soldThisMonth)} />
         <MiniStat label="Giá trị (bán)" value={compactVND(availableAgg._sum.price ?? 0)} />
-        {isAdmin && (
+        {canCost && (
           <p className="col-span-3 border-t border-slate-100 px-3 py-2 text-xs text-slate-500">
             Giá nhập <b className="text-slate-700">{compactVND(withCostAgg._sum.costPrice ?? 0)}</b> · Lãi dự kiến{" "}
             <b className="text-green-700">
@@ -198,11 +207,11 @@ export default async function PricesPage({ searchParams }: { searchParams: Promi
           </p>
         )}
       </div>
-      <div className={`hidden grid-cols-2 gap-3 sm:grid ${isAdmin ? "lg:grid-cols-4" : "lg:grid-cols-3"}`}>
+      <div className={`hidden grid-cols-2 gap-3 sm:grid ${canCost ? "lg:grid-cols-4" : "lg:grid-cols-3"}`}>
         <Stat label="Đang bán" value={`${availableAgg._count} sản phẩm`} />
         <Stat label="Đã bán tháng này" value={`${soldThisMonth} sản phẩm`} />
         <Stat label="Giá trị hàng (giá bán)" value={formatVND(availableAgg._sum.price ?? 0)} />
-        {isAdmin && (
+        {canCost && (
           <Stat
             label="Giá trị hàng (giá nhập)"
             value={formatVND(withCostAgg._sum.costPrice ?? 0)}
@@ -210,6 +219,8 @@ export default async function PricesPage({ searchParams }: { searchParams: Promi
           />
         )}
       </div>
+      </>
+      )}
 
       {/* Tìm kiếm + hãng. Điện thoại: dính dưới thanh trên cùng khi cuộn */}
       <div className="sticky top-14 z-20 -mx-3 bg-[#f5f5f5] px-3 py-2 sm:static sm:mx-0 sm:rounded-lg sm:border sm:border-slate-200/70 sm:bg-white sm:p-3">
@@ -285,7 +296,7 @@ export default async function PricesPage({ searchParams }: { searchParams: Promi
                       {[p.code && `Mã ${p.code}`, p.ownerBranch && `Hàng của ${p.ownerBranch.name}`].filter(Boolean).join(" · ")}
                     </p>
                   )}
-                  {isAdmin && p.costPrice != null && <ProfitLine cost={p.costPrice} price={sellingPrice(p)} />}
+                  {canCost && p.costPrice != null && <ProfitLine cost={p.costPrice} price={sellingPrice(p)} />}
                   <div className="mt-2 flex flex-wrap items-center gap-1.5">
                     <ConditionBadge condition={p.condition} />
                     {!isSingleUnit(p) && st === "AVAILABLE" && <QtyBadge value={p.quantity} />}
@@ -325,9 +336,9 @@ export default async function PricesPage({ searchParams }: { searchParams: Promi
               <th>Sản phẩm</th>
               <th>Cấu hình / màu</th>
               <th>Tình trạng</th>
-              {isAdmin && <th className="text-right">Giá nhập</th>}
+              {canCost && <th className="text-right">Giá nhập</th>}
               <th className="text-right">Giá bán</th>
-              {isAdmin && <th className="text-right">Lãi</th>}
+              {canCost && <th className="text-right">Lãi</th>}
               <th>Bảo hành</th>
               <th>Trạng thái</th>
               {isAdmin && <th></th>}
@@ -367,7 +378,7 @@ export default async function PricesPage({ searchParams }: { searchParams: Promi
                       {p.batteryHealth != null && <BatteryBadge value={p.batteryHealth} />}
                     </div>
                   </td>
-                  {isAdmin && (
+                  {canCost && (
                     <td className="text-right whitespace-nowrap tabular-nums">
                       {p.costPrice != null ? formatVND(p.costPrice) : "—"}
                     </td>
@@ -375,7 +386,7 @@ export default async function PricesPage({ searchParams }: { searchParams: Promi
                   <td className="text-right font-semibold whitespace-nowrap text-slate-900 tabular-nums">
                     <PriceText product={p} />
                   </td>
-                  {isAdmin && (
+                  {canCost && (
                     <td
                       className={`text-right whitespace-nowrap tabular-nums ${
                         p.costPrice == null ? "" : sellingPrice(p) - p.costPrice >= 0 ? "text-green-700" : "text-red-600"

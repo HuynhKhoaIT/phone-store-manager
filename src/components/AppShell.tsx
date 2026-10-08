@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { Suspense, useEffect, useRef, useState, type ReactNode } from "react";
 import {
   ArrowLeftRight,
   ChevronDown,
@@ -16,6 +16,7 @@ import {
 import { logout } from "@/app/actions";
 import { SIDER_COOKIE } from "@/lib/ui";
 import { Toaster } from "./Toaster";
+import { UrlHistory } from "./UrlHistory";
 import { HOME_ITEM, breadcrumbFor, visibleLinks, type NavItem } from "@/lib/nav";
 
 /**
@@ -26,6 +27,7 @@ import { HOME_ITEM, breadcrumbFor, visibleLinks, type NavItem } from "@/lib/nav"
  */
 export function AppShell({
   isAdmin,
+  roleName,
   permissions,
   userName,
   branchName,
@@ -34,6 +36,8 @@ export function AppShell({
   children,
 }: {
   isAdmin: boolean;
+  /** Tên vai trò hiển thị ở menu tài khoản (Admin, Kế toán...) */
+  roleName: string;
   permissions: string[];
   userName: string;
   branchName: string | null;
@@ -79,6 +83,9 @@ export function AppShell({
     <div className="min-h-screen bg-[#f5f5f5]">
       {navigating && <div className="nav-progress" role="progressbar" aria-label="Đang tải trang" />}
       <Toaster />
+      <Suspense fallback={null}>
+        <UrlHistory />
+      </Suspense>
 
       {/* ---------- Sider (chỉ máy tính) ---------- */}
       <aside
@@ -159,7 +166,7 @@ export function AppShell({
           </nav>
           <div className="ml-auto flex min-w-0 items-center gap-3">
             <BranchBadge name={branchName} canChange={canChangeBranch} />
-            <UserMenu name={userName} isAdmin={isAdmin} pathname={pathname} canChangeBranch={canChangeBranch} />
+            <UserMenu name={userName} roleName={roleName} pathname={pathname} canChangeBranch={canChangeBranch} />
           </div>
         </header>
 
@@ -172,7 +179,7 @@ export function AppShell({
                 <img src="/logo.png" alt="Tài Khoa Mobile" width={145} height={28} className="h-7 w-auto" />
               </span>
               <div className="ml-auto">
-                <UserMenu name={userName} isAdmin={isAdmin} pathname={pathname} canChangeBranch={canChangeBranch} />
+                <UserMenu name={userName} roleName={roleName} pathname={pathname} canChangeBranch={canChangeBranch} />
               </div>
             </>
           ) : (
@@ -268,12 +275,12 @@ function BranchBadge({ name, canChange }: { name: string | null; canChange: bool
 
 function UserMenu({
   name,
-  isAdmin,
+  roleName,
   pathname,
   canChangeBranch,
 }: {
   name: string;
-  isAdmin: boolean;
+  roleName: string;
   pathname: string;
   canChangeBranch: boolean;
 }) {
@@ -305,7 +312,7 @@ function UserMenu({
       <div className="absolute right-0 z-50 mt-1 w-52 rounded-lg bg-white py-1 shadow-[0_6px_16px_rgba(0,0,0,0.08),0_3px_6px_-4px_rgba(0,0,0,0.12),0_9px_28px_8px_rgba(0,0,0,0.05)]">
         <div className="border-b border-slate-100 px-4 py-2">
           <p className="truncate text-sm font-medium text-slate-900">{name}</p>
-          <p className="text-xs text-slate-500">{isAdmin ? "Admin" : "Nhân viên"}</p>
+          <p className="text-xs text-slate-500">{roleName}</p>
         </div>
         <Link href="/account" className="flex items-center gap-2 px-4 py-2.5 text-sm text-slate-700 hover:bg-slate-50">
           <UserRound size={16} aria-hidden /> Tài khoản

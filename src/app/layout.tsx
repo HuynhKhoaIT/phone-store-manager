@@ -35,6 +35,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
       <body className="antialiased">
         <AppShell
           isAdmin={user.role === "ADMIN"}
+          roleName={user.roleName ?? "Nhân viên"}
           permissions={user.permissions}
           userName={user.name}
           branchName={current?.name ?? null}

@@ -3,6 +3,7 @@ import { ArrowLeftRight, ArrowRight, PackagePlus } from "lucide-react";
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { requirePermission } from "@/lib/auth";
+import { can } from "@/lib/permissions";
 import { getActiveBranches, getCurrentBranch } from "@/lib/branch";
 import { productLabel } from "@/lib/product-labels";
 import { formatDate, formatMonth, formatVND, isValidMonth, todayVN } from "@/lib/format";
@@ -25,6 +26,7 @@ const TYPE_LABEL: Record<string, string> = { IMPORT: "Nhập từ NCC", TRANSFER
 export default async function ReceiptsPage({ searchParams }: { searchParams: Promise<Search> }) {
   const me = await requirePermission("products");
   const isAdmin = me.role === "ADMIN";
+  const canCost = can(me, "cost-prices");
   const today = todayVN();
   const sp = await searchParams;
   const month = sp.month && isValidMonth(sp.month) ? sp.month : today.slice(0, 7);
@@ -139,7 +141,7 @@ export default async function ReceiptsPage({ searchParams }: { searchParams: Pro
                   <span>Nhà cung cấp</span>
                   <input name="supplier" className="input" placeholder="VD: Kho Hải Phòng" />
                 </label>
-                {isAdmin && (
+                {canCost && (
                   <label className="field">
                     <span>Giá nhập / cái</span>
                     <MoneyInput name="unitCost" />
@@ -209,7 +211,7 @@ export default async function ReceiptsPage({ searchParams }: { searchParams: Pro
 
       <p className="text-sm text-slate-500">
         {formatMonth(month)} · {all.length} phiếu · {totalQty} sản phẩm
-        {isAdmin && importValue > 0 && <> · Tổng tiền nhập {formatVND(importValue)}</>}
+        {canCost && importValue > 0 && <> · Tổng tiền nhập {formatVND(importValue)}</>}
       </p>
 
       <div className="card overflow-x-auto p-0 sm:p-0">
@@ -221,7 +223,7 @@ export default async function ReceiptsPage({ searchParams }: { searchParams: Pro
               <th>Ngày</th>
               <th className="text-right">SL</th>
               <th>Từ / Đến</th>
-              {isAdmin && <th className="text-right">Giá nhập</th>}
+              {canCost && <th className="text-right">Giá nhập</th>}
               <th>Người ghi</th>
               <th>Ghi chú</th>
               {isAdmin && <th></th>}
@@ -253,7 +255,7 @@ export default async function ReceiptsPage({ searchParams }: { searchParams: Pro
                     <b>{t.toBranch.name}</b>
                   </span>
                 </td>
-                {isAdmin && (
+                {canCost && (
                   <td data-label="Giá nhập" className="text-right whitespace-nowrap tabular-nums">
                     {t.unitCost != null ? (
                       <span>

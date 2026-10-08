@@ -15,7 +15,7 @@ export default async function AccountPage() {
           <span className="text-slate-500">Tên đăng nhập:</span> {user.username}
         </p>
         <p>
-          <span className="text-slate-500">Quyền:</span> {user.role === "ADMIN" ? "Admin" : "Nhân viên"}
+          <span className="text-slate-500">Vai trò:</span> {user.roleName ?? "Nhân viên"}
         </p>
       </div>
       <div className="card">

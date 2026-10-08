@@ -2,6 +2,7 @@ import Link from "next/link";
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { requirePermission } from "@/lib/auth";
+import { can } from "@/lib/permissions";
 import { formatDate, formatVND, KIND_LABEL, todayVN, warrantyEnd } from "@/lib/format";
 import { Pagination } from "@/components/Pagination";
 import { getPaging, pageHref, rowClass } from "@/lib/paging";
@@ -88,7 +89,7 @@ export default async function WarrantyPage({ searchParams }: { searchParams: Pro
                     {formatVND(t.price)}
                   </td>
                   <td data-label="Ngày mua" className="whitespace-nowrap">
-                    {me.role === "ADMIN" ? (
+                    {can(me, "customers") ? (
                       <Link href={`/day/${t.shift.date}`} className="text-blue-600 hover:underline">
                         {formatDate(t.shift.date)}
                       </Link>

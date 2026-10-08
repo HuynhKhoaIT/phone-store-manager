@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { Search } from "lucide-react";
-import { requireAdmin } from "@/lib/auth";
+import { requirePermission } from "@/lib/auth";
 import { formatPhone, getCustomers, type Customer } from "@/lib/customers";
 import { formatDate, formatVND, todayVN } from "@/lib/format";
 import { PageHeader } from "@/components/PageHeader";
@@ -17,7 +17,7 @@ const SORTS: Record<string, { label: string; compare: (a: Customer, b: Customer)
 };
 
 export default async function CustomersPage({ searchParams }: { searchParams: Promise<Search> }) {
-  await requireAdmin();
+  await requirePermission("customers");
   const sp = await searchParams;
   const q = sp.q?.trim() ?? "";
   const sort = SORTS[sp.sort ?? ""] ? sp.sort! : "recent";

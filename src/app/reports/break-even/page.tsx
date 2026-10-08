@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { CircleCheck, PiggyBank, TriangleAlert } from "lucide-react";
-import { requireAdmin } from "@/lib/auth";
+import { requirePermission } from "@/lib/auth";
 import { RECENT_DAYS, getCapitalReport } from "@/lib/capital";
 import { addMonths, formatDate, formatMonth, formatVND } from "@/lib/format";
 import { PageHeader } from "@/components/PageHeader";
@@ -11,7 +11,7 @@ const pct = (part: number, whole: number) => (whole > 0 ? (part / whole) * 100 :
 const fmtPct = (n: number) => `${n.toLocaleString("vi-VN", { maximumFractionDigits: 1 })}%`;
 
 export default async function BreakEvenPage() {
-  await requireAdmin();
+  await requirePermission("capital");
   const { today, branches, sharedExpense, total } = await getCapitalReport();
   const missing = branches.filter((b) => b.investment === 0);
   const totalRemaining = Math.max(0, total.investment - total.net);

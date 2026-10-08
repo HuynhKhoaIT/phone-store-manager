@@ -1,7 +1,7 @@
 import Link from "next/link";
 import type { CapitalEntry, Investor, Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
-import { requireAdmin } from "@/lib/auth";
+import { requirePermission } from "@/lib/auth";
 import { getActiveBranches, getBranches } from "@/lib/branch";
 import { CAPITAL_TYPE_LABEL, getCapitalReport } from "@/lib/capital";
 import { formatDate, formatVND } from "@/lib/format";
@@ -21,7 +21,7 @@ type Search = { investor?: string; branch?: string; page?: string; edit?: string
 const fmtPct = (n: number) => `${n.toLocaleString("vi-VN", { maximumFractionDigits: 1 })}%`;
 
 export default async function CapitalPage({ searchParams }: { searchParams: Promise<Search> }) {
-  await requireAdmin();
+  await requirePermission("capital");
   const sp = await searchParams;
   const [report, branches, activeBranches] = await Promise.all([getCapitalReport(), getBranches(), getActiveBranches()]);
   const { investors, total, today } = report;

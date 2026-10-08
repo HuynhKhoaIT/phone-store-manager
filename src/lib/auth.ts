@@ -12,7 +12,15 @@ export const SESSION_COOKIE = "session";
 const SESSION_DAYS = 30;
 
 export type Role = "ADMIN" | "STAFF";
-export type SessionUser = { id: number; name: string; username: string; role: Role; permissions: string[] };
+/** `permissions` = quyền vai trò + quyền riêng (đã gộp); `roleName` = tên vai trò để hiển thị */
+export type SessionUser = {
+  id: number;
+  name: string;
+  username: string;
+  role: Role;
+  roleName: string | null;
+  permissions: string[];
+};
 
 function secret() {
   const s = process.env.AUTH_SECRET;
@@ -60,7 +68,15 @@ const findSessionUser = unstable_cache(
   (id: number) =>
     prisma.user.findUnique({
       where: { id },
-      select: { id: true, name: true, username: true, role: true, permissions: true, active: true },
+      select: {
+        id: true,
+        name: true,
+        username: true,
+        role: true,
+        permissions: true,
+        active: true,
+        staffRole: { select: { name: true, permissions: true } },
+      },
     }),
   ["session-user"],
   { tags: [TAGS.users], revalidate: CACHE_SECONDS },
@@ -78,7 +94,14 @@ export const getSessionUser = cache(async (): Promise<SessionUser | null> => {
 
   const user = await findSessionUser(Number(id));
   if (!user || !user.active) return null;
-  return { id: user.id, name: user.name, username: user.username, role: user.role as Role, permissions: user.permissions };
+  return {
+    id: user.id,
+    name: user.name,
+    username: user.username,
+    role: user.role as Role,
+    roleName: user.role === "ADMIN" ? "Admin" : (user.staffRole?.name ?? null),
+    permissions: [...new Set([...(user.staffRole?.permissions ?? []), ...user.permissions])],
+  };
 });
 
 export async function requireUser() {
@@ -94,6 +117,13 @@ export async function requireAdmin() {
 }
 
 /** Trang theo quyền: admin luôn vào được; nhân viên thiếu quyền thì về trang chủ. */
+/** Có ít nhất một trong các quyền (vd trang Báo cáo: `reports` hoặc `capital`) */
+export async function requireAnyPermission(...permissions: Permission[]) {
+  const user = await requireUser();
+  if (!permissions.some((p) => can(user, p))) redirect("/");
+  return user;
+}
+
 export async function requirePermission(permission: Permission) {
   const user = await requireUser();
   if (!can(user, permission)) redirect("/");

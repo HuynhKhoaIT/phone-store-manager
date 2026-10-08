@@ -262,8 +262,8 @@ export function buildFilters(all: PublicProduct[]) {
 export const getPublicRepairPrices = unstable_cache(
   async () =>
     prisma.repairPrice.findMany({
-      select: { service: true, device: true, price: true, warranty: true },
-      orderBy: [{ service: "asc" }, { device: "asc" }],
+      select: { service: true, device: true, variant: true, price: true, warranty: true },
+      orderBy: [{ service: "asc" }, { device: "asc" }, { price: "asc" }, { id: "asc" }],
     }),
   ["public-repair-prices"],
   { tags: [TAGS.prices], revalidate: CACHE_SECONDS },

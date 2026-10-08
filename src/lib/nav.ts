@@ -32,8 +32,8 @@ export type NavItem = {
   icon: LucideIcon;
   /** Màu nền icon ở trang chủ (Tailwind class) */
   tone: string;
-  /** Quyền cần có; không đặt = chỉ admin */
-  permission?: Permission;
+  /** Quyền cần có (mảng = có một trong các quyền); không đặt = chỉ admin */
+  permission?: Permission | Permission[];
 };
 
 export const HOME_ITEM = {
@@ -44,7 +44,7 @@ export const HOME_ITEM = {
 
 export const STAFF_LINKS: NavItem[] = [
   { href: "/day", match: "/day", label: "Bán hàng", description: "Vào ca, nhập giao dịch, chốt ca", icon: Receipt, tone: "bg-blue-500", permission: "sell" },
-  { href: "/installments", match: "/installments", label: "Bán trả góp", description: "Trả trước, chờ công ty tài chính", icon: HandCoins, tone: "bg-fuchsia-500", permission: "sell" },
+  { href: "/installments", match: "/installments", label: "Bán trả góp", description: "Trả trước, chờ công ty tài chính", icon: HandCoins, tone: "bg-fuchsia-500", permission: ["sell", "installments-manage"] },
   { href: "/tasks", match: "/tasks", label: "Việc cần làm", description: "Checklist công việc", icon: ClipboardCheck, tone: "bg-green-500", permission: "sell" },
   { href: "/products", match: "/products", label: "Hàng hoá", description: "Bảng giá, nhập / chuyển hàng", icon: Boxes, tone: "bg-indigo-500", permission: "products" },
   { href: "/repair-prices", match: "/repair-prices", label: "Giá sửa chữa", description: "Thay pin, thay màn...", icon: Wrench, tone: "bg-orange-500", permission: "repair-prices" },
@@ -54,8 +54,8 @@ export const STAFF_LINKS: NavItem[] = [
 
 export const ADMIN_LINKS: NavItem[] = [
   { href: "/dashboard", match: "/dashboard", label: "Dashboard", description: "Doanh thu tháng", icon: LayoutDashboard, tone: "bg-violet-500", permission: "dashboard" },
-  { href: "/reports", match: "/reports", label: "Báo cáo", description: "Lãi lỗ, chi phí, xuất Excel", icon: ChartColumn, tone: "bg-emerald-600" },
-  { href: "/customers", match: "/customers", label: "Khách hàng", description: "Lịch sử mua, bảo hành", icon: Contact, tone: "bg-orange-500" },
+  { href: "/reports", match: "/reports", label: "Báo cáo", description: "Lãi lỗ, chi phí, xuất Excel", icon: ChartColumn, tone: "bg-emerald-600", permission: ["reports", "capital", "cost-prices"] },
+  { href: "/customers", match: "/customers", label: "Khách hàng", description: "Lịch sử mua, bảo hành", icon: Contact, tone: "bg-orange-500", permission: "customers" },
   { href: "/history", match: "/history", label: "Lịch sử", description: "Xem lại từng ngày", icon: CalendarDays, tone: "bg-sky-600", permission: "history" },
   { href: "/posts", match: "/posts", label: "Tin tức", description: "Bài viết cho web bán hàng", icon: Newspaper, tone: "bg-rose-500", permission: "posts" },
   { href: "/promotions", match: "/promotions", label: "Khuyến mãi", description: "Chương trình giảm giá, quà tặng", icon: BadgePercent, tone: "bg-red-500", permission: "promotions" },
@@ -68,7 +68,8 @@ export const ADMIN_LINKS: NavItem[] = [
 
 /** Các mục người dùng được thấy trong menu (sidebar + trang chủ). */
 export function visibleLinks(user: { role: string; permissions: readonly string[] }) {
-  const allowed = (l: NavItem) => (l.permission ? can(user, l.permission) : user.role === "ADMIN");
+  const allowed = (l: NavItem) =>
+    l.permission ? [l.permission].flat().some((p) => can(user, p)) : user.role === "ADMIN";
   return { staff: STAFF_LINKS.filter(allowed), admin: ADMIN_LINKS.filter(allowed) };
 }
 

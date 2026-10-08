@@ -36,7 +36,7 @@ const getAssignedBranchIds = unstable_cache(
  * Chi nhánh đang hoạt động mà người dùng được phép làm việc. Admin hoặc nhân viên chưa phân công = tất cả.
  * Được cache theo request (layout và getCurrentBranch dùng chung) và chạy song song để giảm số lần gọi DB.
  */
-export const getAllowedBranches = cache(async (user: SessionUser) => {
+export const getAllowedBranches = cache(async (user: Pick<SessionUser, "id" | "role">) => {
   if (user.role === "ADMIN") return getActiveBranches();
   const [active, assigned] = await Promise.all([getActiveBranches(), getAssignedBranchIds(user.id)]);
   if (assigned.length === 0) return active;

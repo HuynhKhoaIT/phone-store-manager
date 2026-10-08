@@ -3,9 +3,10 @@ type Tx = { kind: string; price: number; costPrice: number | null; giftCost?: nu
 /**
  * Một công thức lãi duy nhất cho Dashboard và Báo cáo (trước đây hai trang tính khác nhau nên lệch số).
  * - Giá vốn = giá nhập chụp lúc bán (`Transaction.costPrice`) + giá nhập quà tặng kèm (`Transaction.giftCost`, bán 0 đ).
- * - Sửa chữa không có giá vốn ở đây: linh kiện ghi vào Chi phí (trang Báo cáo) → doanh thu sửa chữa tính hết vào lãi gộp.
- * - Hàng bán chưa có giá nhập (bán ngoài bảng giá / sản phẩm chưa nhập giá) tạm tính giá vốn 0 → đếm vào `missingCost`
- *   để cảnh báo lãi có thể cao hơn thực tế.
+ * - Sửa chữa: chọn đúng loại trong bảng giá sửa chữa thì giá nhập linh kiện (`RepairPrice.costPrice`) được chụp vào
+ *   `costPrice`; không có thì doanh thu sửa chữa tính hết vào lãi gộp (linh kiện ghi ở Chi phí nếu có).
+ * - Bán / sửa chưa có giá vốn (ngoài bảng giá / chưa nhập giá) tạm tính giá vốn 0 → đếm vào `missingCost`
+ *   để cảnh báo lãi có thể cao hơn thực tế; nhập bổ sung ở Báo cáo → Thiếu giá vốn.
  */
 export function profitOf(txs: Tx[]) {
   let revenue = 0;
@@ -15,7 +16,7 @@ export function profitOf(txs: Tx[]) {
     revenue += t.price;
     cogs += t.giftCost ?? 0;
     if (t.costPrice != null) cogs += t.costPrice;
-    else if (t.kind === "SALE") missingCost++;
+    else if (t.kind === "SALE" || t.kind === "REPAIR") missingCost++;
   }
   return { revenue, cogs, gross: revenue - cogs, missingCost };
 }

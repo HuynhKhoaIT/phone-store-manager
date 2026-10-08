@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/db";
 import { getSessionUser } from "@/lib/auth";
+import { can } from "@/lib/permissions";
 import { EXPENSE_CATEGORIES } from "@/lib/expenses";
 import { formatDate, KIND_LABEL, PAYMENT_LABEL, todayVN } from "@/lib/format";
 import { getPeriod } from "@/lib/period";
@@ -22,7 +23,7 @@ function toExcelText(rows: Cell[][]) {
 export async function GET(req: Request) {
   // Middleware chỉ kiểm tra có cookie — quyền admin phải kiểm tra ở đây
   const me = await getSessionUser();
-  if (!me || me.role !== "ADMIN") return new Response("Không có quyền", { status: 403 });
+  if (!me || !can(me, "reports")) return new Response("Không có quyền", { status: 403 });
 
   const url = new URL(req.url);
   const type = url.searchParams.get("type") === "expenses" ? "expenses" : "transactions";
@@ -32,6 +33,8 @@ export async function GET(req: Request) {
   const dateRange = { gte: period.from, lte: period.to };
   const branchId = Number(url.searchParams.get("branch")) || undefined;
 
+  // Giá nhập + lãi từng giao dịch chỉ xuất cho người có quyền "Giá nhập & lãi"
+  const canCost = can(me, "cost-prices");
   let rows: Cell[][];
   if (type === "transactions") {
     const txs = await prisma.transaction.findMany({
@@ -52,11 +55,11 @@ export async function GET(req: Request) {
         KIND_LABEL[t.kind],
         t.productName,
         t.price,
-        t.costPrice,
+        canCost ? t.costPrice : null,
         t.gifts.map((g) => (g.quantity > 1 ? `${g.productName} x${g.quantity}` : g.productName)).join(", ") || null,
-        t.giftCost || null,
+        canCost ? t.giftCost || null : null,
         // Lãi = giá bán − giá nhập − giá vốn quà tặng (cùng công thức lib/profit.ts)
-        t.costPrice != null ? t.price - t.costPrice - t.giftCost : null,
+        canCost && t.costPrice != null ? t.price - t.costPrice - t.giftCost : null,
         // Trả góp: "Trả góp Home Credit (trả trước 2.000.000 TM)"
         t.financeCompany
           ? `Trả góp ${t.financeCompany} (trả trước ${(t.downPayment ?? 0).toLocaleString("vi-VN")} ${PAYMENT_LABEL[t.paymentMethod]})`

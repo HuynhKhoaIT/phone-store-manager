@@ -3,6 +3,7 @@ import { ArrowRight, Handshake } from "lucide-react";
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { requirePermission } from "@/lib/auth";
+import { can } from "@/lib/permissions";
 import { getActiveBranches, getBranches, getCurrentBranch } from "@/lib/branch";
 import { productLabel } from "@/lib/product-labels";
 import { LOAN_STATE_BADGE, LOAN_STATE_LABEL, loanState, type LoanState } from "@/lib/loans";
@@ -33,6 +34,8 @@ const TABS: Record<string, { label: string; where: Prisma.BranchLoanWhereInput }
 export default async function LoansPage({ searchParams }: { searchParams: Promise<Search> }) {
   const me = await requirePermission("products");
   const isAdmin = me.role === "ADMIN";
+  // Số tiền mượn hàng = giá nhập → chỉ ai có quyền "Giá nhập & lãi" thấy + đánh dấu thanh toán
+  const canCost = can(me, "cost-prices");
   const today = todayVN();
   const sp = await searchParams;
   const tab = TABS[sp.tab ?? ""] ? sp.tab! : "open";
@@ -194,11 +197,11 @@ export default async function LoansPage({ searchParams }: { searchParams: Promis
 
       <ProductsTabs active="loans" />
 
-      {/* Tổng kết: ai đang nợ ai (chỉ admin thấy số tiền vì đó là giá nhập) */}
+      {/* Tổng kết: ai đang nợ ai (số tiền là giá nhập → cần quyền Giá nhập & lãi) */}
       {(debts.length > 0 || borrowedCount.length > 0) && (
         <div className="grid gap-3 md:grid-cols-2">
           {debts
-            .filter((d) => d.amount > 0 || !isAdmin)
+            .filter((d) => d.amount > 0 || !canCost)
             .map((d) => (
               <div
                 key={`${d.from}-${d.to}`}
@@ -209,7 +212,7 @@ export default async function LoansPage({ searchParams }: { searchParams: Promis
                     <b className="text-slate-900">{branchName(d.from)}</b>
                     <ArrowRight size={14} aria-hidden /> cần trả <b className="text-slate-900">{branchName(d.to)}</b>
                   </p>
-                  {isAdmin ? (
+                  {canCost ? (
                     <p className="mt-0.5 text-xl font-bold text-amber-800 tabular-nums">{formatVND(d.amount)}</p>
                   ) : (
                     <p className="mt-0.5 text-sm text-slate-600">{d.count} món đã bán chưa thanh toán</p>
@@ -256,7 +259,7 @@ export default async function LoansPage({ searchParams }: { searchParams: Promis
               <th>Mượn</th>
               <th>Ngày mượn</th>
               <th>Trạng thái</th>
-              {isAdmin && <th className="text-right">Phải trả</th>}
+              {canCost && <th className="text-right">Phải trả</th>}
               <th></th>
             </tr>
           </thead>
@@ -295,7 +298,7 @@ export default async function LoansPage({ searchParams }: { searchParams: Promis
                       </span>
                     </span>
                   </td>
-                  {isAdmin && (
+                  {canCost && (
                     <td data-label="Phải trả" className="text-right whitespace-nowrap tabular-nums">
                       {state === "RETURNED" ? (
                         <span className="text-slate-400">—</span>
@@ -326,7 +329,7 @@ export default async function LoansPage({ searchParams }: { searchParams: Promis
                           </ConfirmButton>
                         </>
                       )}
-                      {isAdmin && state === "UNPAID" && (
+                      {canCost && state === "UNPAID" && (
                         <ConfirmButton
                           action={setLoanStatus.bind(null, l.id, "paid")}
                           message={`${l.borrowerBranch.name} đã trả ${formatVND(l.amount)} cho ${l.lenderBranch.name}?`}
@@ -335,7 +338,7 @@ export default async function LoansPage({ searchParams }: { searchParams: Promis
                           Đã thanh toán
                         </ConfirmButton>
                       )}
-                      {isAdmin && state === "PAID" && (
+                      {canCost && state === "PAID" && (
                         <ConfirmButton
                           action={setLoanStatus.bind(null, l.id, "unpaid")}
                           message="Bỏ đánh dấu đã thanh toán?"
@@ -364,7 +367,7 @@ export default async function LoansPage({ searchParams }: { searchParams: Promis
             })}
             {loans.length === 0 && (
               <tr>
-                <td colSpan={isAdmin ? 6 : 5} className="py-8 text-center text-slate-500">
+                <td colSpan={canCost ? 6 : 5} className="py-8 text-center text-slate-500">
                   {tab === "open" ? "Không có hàng nào đang mượn hay chưa thanh toán." : "Không có dòng nào."}
                 </td>
               </tr>

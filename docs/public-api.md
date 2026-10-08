@@ -102,11 +102,17 @@ Cửa hàng hiện trên web: chi nhánh đang hoạt động **và** bật "Hi�
 
 ### `GET /repair-prices`
 
-Bảng giá sửa chữa (không có ghi chú nội bộ), sắp theo dịch vụ rồi dòng máy:
+Bảng giá sửa chữa (không có ghi chú nội bộ), sắp theo dịch vụ, dòng máy rồi giá:
 
 ```json
-{ "items": [{ "service": "Thay pin", "device": "iPhone 11", "price": 480000, "warranty": "6 tháng" }] }
+{ "items": [
+  { "service": "Thay màn hình", "device": "iPhone 8 Plus", "variant": "Incell", "price": 650000, "warranty": "3 tháng" },
+  { "service": "Thay màn hình", "device": "iPhone 8 Plus", "variant": "Zin bóc máy", "price": 1200000, "warranty": "6 tháng" },
+  { "service": "Thay pin", "device": "iPhone 11", "variant": null, "price": 480000, "warranty": "6 tháng" }
+] }
 ```
+
+`variant`: loại linh kiện (Zin, OLED, Incell...). Một dịch vụ × dòng máy có thể có **nhiều dòng** khác `variant` (mỗi loại một giá); `null` = chỉ một mức giá. FE gom theo `service` + `device`.
 
 `price = 0`: admin để trống giá (giá thay đổi theo linh kiện / thị trường) → FE hiện **"Liên hệ"**.
 

@@ -2,7 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ArrowLeft, MessageCircle, Phone } from "lucide-react";
 import { prisma } from "@/lib/db";
-import { requireAdmin } from "@/lib/auth";
+import { requirePermission } from "@/lib/auth";
 import { formatPhone } from "@/lib/customers";
 import { formatDate, formatVND, KIND_LABEL, PAYMENT_LABEL, todayVN, warrantyEnd } from "@/lib/format";
 import { PageHeader } from "@/components/PageHeader";
@@ -16,7 +16,7 @@ export default async function CustomerPage({
   params: Promise<{ phone: string }>;
   searchParams: Promise<{ page?: string }>;
 }) {
-  await requireAdmin();
+  await requirePermission("customers");
   const phone = decodeURIComponent((await params).phone);
   const sp = await searchParams;
   const txs = await prisma.transaction.findMany({

@@ -20,7 +20,11 @@ export type PriceSuggestion = {
   listPrice?: number;
   /** Ưu đãi đang áp dụng, vd "Sale 10/10: Giảm 10% · Tặng ốp: Tặng ốp lưng" */
   promo?: string;
+  /** Sửa chữa: các loại linh kiện (Zin, OLED, Incell...) của dịch vụ × dòng máy, giá thấp → cao */
+  variants?: RepairVariant[];
 };
+
+export type RepairVariant = { id: number; name: string; price: number; warranty?: string; warrantyMonths?: number };
 
 export function TransactionFields({
   shiftId,
@@ -46,6 +50,10 @@ export function TransactionFields({
   const [productId, setProductId] = useState("");
   const [productName, setProductName] = useState("");
   const [warranty, setWarranty] = useState(0);
+  // Sửa chữa có nhiều loại linh kiện: gợi ý đang chọn + loại đã chọn
+  const [repairPick, setRepairPick] = useState<PriceSuggestion | null>(null);
+  const [variantId, setVariantId] = useState<number | null>(null);
+  const [repairPriceId, setRepairPriceId] = useState("");
   // Trả góp luôn cần thông tin khách (hợp đồng với công ty tài chính)
   // Bán SIM / nạp card: không bảo hành, không quà tặng
   const isSim = kind === "SIM" || kind === "TOPUP";
@@ -59,14 +67,42 @@ export function TransactionFields({
 
   function selectSuggestion(match: PriceSuggestion) {
     setProductName(match.label);
+    if (kind === "REPAIR" && match.variants?.length) {
+      setRepairPick(match);
+      // Một loại thì chọn luôn; nhiều loại thì để nhân viên bấm chọn (giá theo loại)
+      if (match.variants.length === 1) chooseVariant(match, match.variants[0]);
+      else {
+        setVariantId(null);
+        setRepairPriceId("");
+        setPrice("");
+        // Bảo hành theo loại sẽ chọn — không giữ của lựa chọn trước
+        setWarranty(0);
+      }
+      return;
+    }
+    setRepairPick(null);
+    setRepairPriceId("");
     // Chỉ giữ liên kết sản phẩm khi chọn đúng gợi ý (để đánh dấu máy có IMEI là đã bán)
     setProductId(kind === "SALE" && match.productId ? String(match.productId) : "");
     setPrice(String(match.price));
     if (match.warrantyMonths != null) setWarranty(match.warrantyMonths);
   }
 
+  function chooseVariant(pick: PriceSuggestion, v: RepairVariant) {
+    setVariantId(v.id);
+    setRepairPriceId(String(v.id));
+    setProductName(v.name ? `${pick.label} (${v.name})` : pick.label);
+    setPrice(v.price > 0 ? String(v.price) : "");
+    setWarranty(v.warrantyMonths ?? 0);
+  }
+
   function onProductType(text: string) {
     setProductName(text);
+    // Gõ sửa tên khác đi thì bỏ bảng chọn loại
+    if (repairPick && !text.startsWith(repairPick.label)) {
+      setRepairPick(null);
+      setRepairPriceId("");
+    }
     const match = suggestions.find((s) => s.label === text);
     if (match) selectSuggestion(match);
     else setProductId("");
@@ -74,7 +110,11 @@ export function TransactionFields({
 
   function changeKind(k: Kind) {
     // Đổi loại thì gợi ý cũ không còn đúng danh sách
-    if (k !== kind) setProductId("");
+    if (k !== kind) {
+      setProductId("");
+      setRepairPick(null);
+      setRepairPriceId("");
+    }
     setKind(k);
   }
 
@@ -84,6 +124,7 @@ export function TransactionFields({
       <input type="hidden" name="kind" value={kind} />
       <input type="hidden" name="paymentMethod" value={payment} />
       <input type="hidden" name="productId" value={kind === "SALE" ? productId : ""} />
+      <input type="hidden" name="repairPriceId" value={kind === "REPAIR" ? repairPriceId : ""} />
       {installment && <input type="hidden" name="installment" value="1" />}
 
       {!installment && (
@@ -116,10 +157,39 @@ export function TransactionFields({
           onSelect={selectSuggestion}
           options={suggestions}
           getLabel={suggestionLabel}
+          getKeywords={suggestionKeywords}
           renderMeta={suggestionMeta}
           ariaLabel={kind === "REPAIR" ? "Nội dung sửa chữa" : "Tên sản phẩm"}
           placeholder={kind === "REPAIR" ? "Gõ để tìm trong bảng giá sửa chữa..." : "Gõ tên, IMEI hoặc mã để tìm..."}
         />
+        {kind === "REPAIR" && repairPick?.variants && repairPick.variants.length > 1 && (
+          <div role="radiogroup" aria-label="Loại linh kiện" className="mt-1 flex flex-wrap gap-1.5">
+            {repairPick.variants.map((v) => {
+              const on = variantId === v.id;
+              return (
+                <button
+                  key={v.id}
+                  type="button"
+                  role="radio"
+                  aria-checked={on}
+                  onClick={() => chooseVariant(repairPick, v)}
+                  className={`rounded-md border px-2.5 py-1.5 text-left text-sm transition ${
+                    on ? "border-[#1677ff] bg-blue-50 text-[#1677ff]" : "border-slate-200 bg-white hover:border-slate-300"
+                  }`}
+                >
+                  <span className="font-medium">{v.name}</span>
+                  <span className="block text-xs text-slate-500 tabular-nums">
+                    {v.price > 0 ? `${v.price.toLocaleString("vi-VN")} đ` : "Liên hệ"}
+                    {v.warranty && ` · BH ${v.warranty}`}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        )}
+        {kind === "REPAIR" && repairPick?.variants && repairPick.variants.length > 1 && !variantId && (
+          <small className="text-amber-700">Chọn loại linh kiện để điền giá và bảo hành.</small>
+        )}
         {kind === "SALE" && selectedPromo && (
           <small className="text-red-600">
             Khuyến mãi: {selectedPromo.promo}
@@ -313,10 +383,6 @@ function SimFields({ mode, onModeChange }: { mode: "SIM" | "TOPUP"; onModeChange
       ) : (
         <>
           <label className="field">
-            <span>Serial SIM</span>
-            <input name="simSerial" inputMode="numeric" autoComplete="off" className="input" placeholder="Số in trên SIM" />
-          </label>
-          <label className="field">
             <span>Giá SIM *</span>
             <MoneyInput name="simPrice" required value={simPrice} onChange={setSimPrice} />
           </label>
@@ -366,8 +432,13 @@ function PaymentSegmented({
 
 const suggestionLabel = (s: PriceSuggestion) => s.label;
 const giftMeta = (s: PriceSuggestion) => (s.quantity != null ? `Còn ${s.quantity}` : "");
-const suggestionMeta = (s: PriceSuggestion) =>
-  `${s.price > 0 ? `${s.price.toLocaleString("vi-VN")} đ` : "Liên hệ"}${s.promo ? " · KM" : ""}`;
+// Tìm được theo tên loại linh kiện, vd "màn oled 8 plus"
+const suggestionKeywords = (s: PriceSuggestion) => s.variants?.map((v) => v.name).join(" ") ?? "";
+const suggestionMeta = (s: PriceSuggestion) => {
+  const price = s.price > 0 ? `${s.price.toLocaleString("vi-VN")} đ` : "Liên hệ";
+  if (s.variants && s.variants.length > 1) return `${s.variants.length} loại · từ ${price}`;
+  return `${price}${s.promo ? " · KM" : ""}`;
+};
 
 /**
  * Quà tặng kèm khi bán (sạc, tai nghe, ốp lưng, cường lực...): chọn phụ kiện của cửa hàng + số lượng.

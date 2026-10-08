@@ -15,6 +15,7 @@ export function ShiftCard({
   shift,
   canEdit,
   isAdmin,
+  canCost,
   defaultCheckOut,
   checklistLeft,
   bankAccounts,
@@ -30,6 +31,8 @@ export function ShiftCard({
   };
   canEdit: boolean;
   isAdmin: boolean;
+  /** Xem lãi (quyền "Giá nhập & lãi") */
+  canCost: boolean;
   defaultCheckOut: string;
   checklistLeft: number;
   bankAccounts: string[];
@@ -45,7 +48,7 @@ export function ShiftCard({
   const canDelete = canEdit && isAdmin;
   const diff = (shift.handoverCash ?? 0) - expectedCash;
   // Lãi chỉ admin xem (giá nhập là dữ liệu nội bộ) — cùng công thức Dashboard / Báo cáo
-  const profit = isAdmin ? profitOf(shift.transactions) : null;
+  const profit = canCost ? profitOf(shift.transactions) : null;
 
   return (
     <section className="card space-y-4">
@@ -148,7 +151,7 @@ export function ShiftCard({
               {formatVND(profit.gross)}
             </p>
             {profit.missingCost > 0 && (
-              <p className="text-xs text-amber-700">{profit.missingCost} giao dịch chưa có giá nhập</p>
+              <p className="text-xs text-amber-700">{profit.missingCost} giao dịch chưa có giá vốn</p>
             )}
           </div>
         )}
@@ -167,7 +170,7 @@ export function ShiftCard({
                 <p className="min-w-0 font-medium">{t.productName}</p>
                 <p className="shrink-0 text-right font-semibold tabular-nums">
                   {formatVND(t.price)}
-                  {isAdmin && <TxProfit tx={t} block />}
+                  {canCost && <TxProfit tx={t} block />}
                 </p>
               </div>
               <GiftLine gifts={t.gifts} />
@@ -208,7 +211,7 @@ export function ShiftCard({
                 <th>Loại</th>
                 <th>Sản phẩm / Dịch vụ</th>
                 <th className="text-right">Giá</th>
-                {isAdmin && <th className="text-right">Lãi</th>}
+                {canCost && <th className="text-right">Lãi</th>}
                 <th>TT</th>
                 <th>Bảo hành</th>
                 <th>Khách hàng</th>
@@ -229,7 +232,7 @@ export function ShiftCard({
                     <SimLine tx={t} />
                   </td>
                   <td className="text-right font-semibold whitespace-nowrap tabular-nums">{formatVND(t.price)}</td>
-                  {isAdmin && (
+                  {canCost && (
                     <td className="text-right whitespace-nowrap">
                       <TxProfit tx={t} />
                     </td>
@@ -346,7 +349,7 @@ function KindBadge({ kind }: { kind: string }) {
   );
 }
 
-/** Bán SIM: giá SIM + giá gói cước, serial */
+/** Bán SIM: giá SIM + giá gói cước */
 function SimLine({ tx }: { tx: Transaction }) {
   if (tx.kind !== "SIM") return null;
   const plan = tx.simPlanPrice ?? 0;
@@ -354,7 +357,6 @@ function SimLine({ tx }: { tx: Transaction }) {
     <p className="text-xs font-normal text-slate-500">
       SIM {formatVND(tx.price - plan)}
       {plan > 0 && ` + gói cước ${formatVND(plan)}`}
-      {tx.simSerial && ` · Serial ${tx.simSerial}`}
     </p>
   );
 }
@@ -399,7 +401,7 @@ function GiftLine({ gifts }: { gifts: TransactionGift[] }) {
  * Hàng bán chưa có giá nhập thì không tính được → "—". Sửa chữa không có giá vốn (linh kiện ghi ở Chi phí).
  */
 function TxProfit({ tx, block }: { tx: Transaction; block?: boolean }) {
-  const missing = tx.kind === "SALE" && tx.costPrice == null;
+  const missing = (tx.kind === "SALE" || tx.kind === "REPAIR") && tx.costPrice == null;
   const value = tx.price - (tx.costPrice ?? 0) - tx.giftCost;
   const cls = `text-xs font-medium tabular-nums ${block ? "block" : ""}`;
   if (missing)

@@ -4,7 +4,8 @@ import { redirect } from "next/navigation";
 import { Search } from "lucide-react";
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
-import { requirePermission } from "@/lib/auth";
+import { requireAnyPermission } from "@/lib/auth";
+import { can } from "@/lib/permissions";
 import { getCurrentBranch } from "@/lib/branch";
 import { formatDate, formatVND, PAYMENT_LABEL, todayVN } from "@/lib/format";
 import { getRecentBankAccounts, getSaleSuggestions } from "@/lib/prices";
@@ -31,8 +32,10 @@ const STATUS_TABS = [
  * Doanh thu tính đủ giá bán vào ngày bán (như bán thường); tiền nhận sau cộng vào ca đang làm.
  */
 export default async function InstallmentsPage({ searchParams }: { searchParams: Promise<Search> }) {
-  const me = await requirePermission("sell");
+  const me = await requireAnyPermission("sell", "installments-manage");
   const isAdmin = me.role === "ADMIN";
+  // Xoá lần thu ghi sai: quyền "Quản lý trả góp"
+  const canManage = can(me, "installments-manage");
   const branch = await getCurrentBranch();
   if (!branch) redirect("/choose-branch");
   const sp = await searchParams;
@@ -260,7 +263,7 @@ export default async function InstallmentsPage({ searchParams }: { searchParams:
                           <span className="tabular-nums">
                             {formatDate(p.date)} · {formatVND(p.amount)} {PAYMENT_LABEL[p.paymentMethod]} · {p.createdBy}
                           </span>
-                          {isAdmin && !p.shift?.closedAt && (
+                          {canManage && !p.shift?.closedAt && (
                             <ConfirmButton
                               action={deleteInstallmentPayment.bind(null, p.id)}
                               message={`Xoá lần thu ${formatVND(p.amount)}?`}
