@@ -5,6 +5,7 @@ import {
   Contact,
   ClipboardCheck,
   Clock,
+  HandCoins,
   House,
   LayoutDashboard,
   KeyRound,
@@ -42,6 +43,7 @@ export const HOME_ITEM = {
 
 export const STAFF_LINKS: NavItem[] = [
   { href: "/day", match: "/day", label: "Bán hàng", description: "Vào ca, nhập giao dịch, chốt ca", icon: Receipt, tone: "bg-blue-500", permission: "sell" },
+  { href: "/installments", match: "/installments", label: "Bán trả góp", description: "Trả trước, chờ công ty tài chính", icon: HandCoins, tone: "bg-fuchsia-500", permission: "sell" },
   { href: "/tasks", match: "/tasks", label: "Việc cần làm", description: "Checklist công việc", icon: ClipboardCheck, tone: "bg-green-500", permission: "sell" },
   { href: "/products", match: "/products", label: "Hàng hoá", description: "Bảng giá, nhập / chuyển hàng", icon: Boxes, tone: "bg-indigo-500", permission: "products" },
   { href: "/repair-prices", match: "/repair-prices", label: "Giá sửa chữa", description: "Thay pin, thay màn...", icon: Wrench, tone: "bg-orange-500", permission: "repair-prices" },

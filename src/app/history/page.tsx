@@ -20,7 +20,12 @@ export default async function HistoryPage({ searchParams }: { searchParams: Prom
 
   const shifts = await prisma.shift.findMany({
     where: { branchId: branch.id, date: { startsWith: month } },
-    include: { transactions: { select: { kind: true, price: true, paymentMethod: true, bankAccount: true } } },
+    include: {
+      transactions: {
+        select: { kind: true, price: true, paymentMethod: true, bankAccount: true, financeCompany: true, downPayment: true },
+      },
+      financePayments: { select: { amount: true, paymentMethod: true, bankAccount: true } },
+    },
     orderBy: [{ date: "asc" }, { checkIn: "asc" }],
   });
 
@@ -29,15 +34,21 @@ export default async function HistoryPage({ searchParams }: { searchParams: Prom
 
   const dayInfo = (date: string) => {
     const list = days.get(date) ?? [];
-    const sum = summarize(list.flatMap((s) => s.transactions));
+    const sum = summarize(
+      list.flatMap((s) => s.transactions),
+      list.flatMap((s) => s.financePayments),
+    );
     const open = list.some((s) => !s.closedAt);
     const mismatch = list.some(
-      (s) => s.closedAt && s.handoverCash !== s.openingCash + summarize(s.transactions).cash,
+      (s) => s.closedAt && s.handoverCash !== s.openingCash + summarize(s.transactions, s.financePayments).cash,
     );
     return { list, sum, open, mismatch };
   };
 
-  const monthSum = summarize(shifts.flatMap((s) => s.transactions));
+  const monthSum = summarize(
+    shifts.flatMap((s) => s.transactions),
+    shifts.flatMap((s) => s.financePayments),
+  );
   const count = daysInMonth(month);
   const firstWeekday = (new Date(`${month}-01T00:00:00Z`).getUTCDay() + 6) % 7; // T2 = 0
   const cells: (string | null)[] = [

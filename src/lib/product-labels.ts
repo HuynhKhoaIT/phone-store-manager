@@ -65,3 +65,12 @@ export function productPickLabel(p: Parameters<typeof productLabel>[0] & { categ
   if (!p.code) return name;
   return `${name} - ${isSingleUnit({ category: p.category, code: p.code }) ? "IMEI" : "Mã"} ${p.code}`;
 }
+
+/**
+ * Giá bán tại quầy: điện thoại có giá sale (nhỏ hơn giá bán) thì dùng giá sale.
+ * Phụ kiện: giá khuyến mãi chỉ dùng cho web, tại quầy vẫn bán giá bán.
+ */
+export function sellingPrice(p: { category: string; price: number; salePrice?: number | null }) {
+  if (p.category === "ACCESSORY") return p.price;
+  return p.salePrice != null && p.salePrice > 0 && p.salePrice < p.price ? p.salePrice : p.price;
+}

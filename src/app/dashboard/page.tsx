@@ -136,6 +136,14 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
               <p className="text-lg font-bold tabular-nums">{formatVND(sum.transfer)}</p>
               <p className="text-xs text-slate-500">{pct(sum.transfer, sum.total)}</p>
             </div>
+            {/* Bán trả góp: phần công ty tài chính trả (trả trước đã nằm trong TM / CK) */}
+            {sum.financed > 0 && (
+              <div>
+                <p className="text-xs text-slate-500">Trả góp (cty tài chính)</p>
+                <p className="text-lg font-bold tabular-nums">{formatVND(sum.financed)}</p>
+                <p className="text-xs text-slate-500">{pct(sum.financed, sum.total)}</p>
+              </div>
+            )}
           </div>
           {sum.byAccount.length > 0 && (
             <table className="table mt-3">

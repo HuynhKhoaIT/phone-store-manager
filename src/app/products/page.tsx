@@ -1,4 +1,5 @@
 import Link from "next/link";
+import Form from "next/form";
 import { BatteryMedium, Globe, Headphones, Search, Smartphone, TabletSmartphone } from "lucide-react";
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
@@ -12,6 +13,7 @@ import {
   isSingleUnit,
   productStatus,
   type ProductStatus,
+  sellingPrice,
 } from "@/lib/product-labels";
 import { dateVN, formatDate, formatVND, todayVN } from "@/lib/format";
 import { ProductsTabs } from "@/components/ProductsTabs";
@@ -21,10 +23,11 @@ import { ConfirmButton } from "@/components/ConfirmButton";
 import { FormDialog } from "@/components/FormDialog";
 import { PageHeader } from "@/components/PageHeader";
 import { ProductFields } from "@/components/ProductFields";
+import { AutoSubmitSelect } from "@/components/AutoSubmitSelect";
 import { Pagination } from "@/components/Pagination";
 import { getPaging, pageHref } from "@/lib/paging";
 
-type Search = { cat?: string; q?: string; cond?: string; edit?: string; status?: string; brand?: string; branch?: string; page?: string };
+type Search = { cat?: string; q?: string; cond?: string; edit?: string; status?: string; brand?: string; page?: string };
 
 const STATUS_WHERE: Record<ProductStatus, Prisma.ProductWhereInput> = {
   AVAILABLE: { active: true, soldBranchId: null },
@@ -54,9 +57,10 @@ export default async function PricesPage({ searchParams }: { searchParams: Promi
     prisma.brand.findMany({ where: { active: true }, select: { id: true, name: true }, orderBy: { name: "asc" } }),
     getCurrentBranch(),
   ]);
-  const brandId = brands.find((b) => b.id === Number(sp.brand))?.id;
-  // Mỗi quán quản lý hàng riêng: mặc định xem hàng của quán đang làm; "all" = mọi quán
-  const branchId = sp.branch === "all" ? undefined : (branches.find((b) => b.id === Number(sp.branch))?.id ?? current?.id);
+  // iPhone không có thương hiệu riêng → bỏ lọc hãng khi chọn loại iPhone
+  const brandId = cat === "IPHONE" ? undefined : brands.find((b) => b.id === Number(sp.brand))?.id;
+  // Mỗi quán quản lý hàng riêng: chỉ xem hàng của quán đang làm (đổi quán ở "Đổi chi nhánh")
+  const branchId = current?.id;
   // Hàng cũ chưa gắn chi nhánh vẫn hiện ở mọi quán để admin gắn
   const branchWhere: Prisma.ProductWhereInput = branchId ? { OR: [{ ownerBranchId: branchId }, { ownerBranchId: null }] } : {};
 
@@ -102,7 +106,6 @@ export default async function PricesPage({ searchParams }: { searchParams: Promi
     q,
     status: status === "AVAILABLE" ? "" : status,
     brand: brandId ? String(brandId) : "",
-    branch: sp.branch === "all" ? "all" : branchId && branchId !== current?.id ? String(branchId) : "",
   };
   // Giữ trang hiện tại để đóng hộp sửa vẫn ở đúng trang
   const qs = (patch: Partial<Search>) => {
@@ -121,7 +124,7 @@ export default async function PricesPage({ searchParams }: { searchParams: Promi
   const [stock, soldThisMonth] = await Promise.all([
     prisma.product.findMany({
       where: { ...STATUS_WHERE.AVAILABLE, ...catWhere },
-      select: { price: true, costPrice: true, quantity: true },
+      select: { category: true, price: true, salePrice: true, costPrice: true, quantity: true },
     }),
     prisma.product.count({ where: { ...catWhere, soldAt: { gte: monthStart } } }),
   ]);
@@ -129,18 +132,18 @@ export default async function PricesPage({ searchParams }: { searchParams: Promi
   const withCost = inStock.filter((p) => p.costPrice != null);
   const availableAgg = {
     _count: inStock.reduce((s, p) => s + p.quantity, 0),
-    _sum: { price: inStock.reduce((s, p) => s + p.price * p.quantity, 0) },
+    _sum: { price: inStock.reduce((s, p) => s + sellingPrice(p) * p.quantity, 0) },
   };
   // Lãi dự kiến chỉ tính trên hàng đã có giá nhập
   const withCostAgg = {
     _count: withCost.reduce((s, p) => s + p.quantity, 0),
     _sum: {
-      price: withCost.reduce((s, p) => s + p.price * p.quantity, 0),
+      price: withCost.reduce((s, p) => s + sellingPrice(p) * p.quantity, 0),
       costPrice: withCost.reduce((s, p) => s + (p.costPrice ?? 0) * p.quantity, 0),
     },
   };
 
-  const formProps = { branches, brands, defaultBranchId: branchId ?? current?.id };
+  const formProps = { branches, brands, defaultBranchId: branchId };
 
   return (
     <div className="space-y-5">
@@ -208,69 +211,52 @@ export default async function PricesPage({ searchParams }: { searchParams: Promi
         )}
       </div>
 
-      {/* Mỗi quán quản lý hàng riêng — mặc định quán đang làm; xem quán kia để mượn hàng */}
-      <div className="flex flex-wrap gap-2">
-        {[
-          ...branches.map((b) => ({
-            key: b.id === current?.id ? "" : String(b.id),
-            label: b.id === current?.id ? `${b.name} (quán này)` : b.name,
-            active: branchId === b.id,
-          })),
-          { key: "all", label: "Tất cả chi nhánh", active: !branchId },
-        ].map((t) => (
-          <Link
-            key={t.key || "current"}
-            href={pageHref("/products", { ...filters, branch: t.key })(1)}
-            className={`rounded-md px-3 py-1 text-sm font-medium ring-1 ${
-              t.active ? "bg-slate-900 text-white ring-slate-900" : "bg-white text-slate-600 ring-slate-200 hover:text-slate-900"
-            }`}
-          >
-            {t.label}
-          </Link>
-        ))}
-      </div>
-
       {/* Tìm kiếm + hãng. Điện thoại: dính dưới thanh trên cùng khi cuộn */}
       <div className="sticky top-14 z-20 -mx-3 bg-[#f5f5f5] px-3 py-2 sm:static sm:mx-0 sm:rounded-lg sm:border sm:border-slate-200/70 sm:bg-white sm:p-3">
-        <form action="/products" className="flex w-full gap-2">
-          {cat && <input type="hidden" name="cat" value={cat} />}
+        {/* Chọn Loại / Hãng là lọc ngay; ô tìm thì Enter hoặc bấm Tìm */}
+        <Form action="/products" className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
           {cond && <input type="hidden" name="cond" value={cond} />}
           {status !== "AVAILABLE" && <input type="hidden" name="status" value={status} />}
-          {brands.length > 0 && (
-            <select
-              name="brand"
-              defaultValue={brandId ?? ""}
-              aria-label="Thương hiệu"
-              className="input order-last w-28 shrink-0 sm:order-first sm:w-auto"
-            >
-              <option value="">Mọi hãng</option>
+          <div className="col-span-2 flex min-w-0 gap-2 sm:order-last sm:flex-1">
+            <label className="relative min-w-0 flex-1 sm:max-w-sm">
+              <Search
+                size={16}
+                className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-slate-400"
+                aria-hidden
+              />
+              <input
+                name="q"
+                type="search"
+                defaultValue={q}
+                placeholder="Tìm tên, mã / IMEI..."
+                aria-label="Tìm sản phẩm"
+                className="input pl-9"
+              />
+            </label>
+            <button className="btn-secondary shrink-0" aria-label="Tìm">
+              <Search size={16} className="sm:hidden" aria-hidden />
+              <span className="hidden sm:inline">Tìm</span>
+            </button>
+          </div>
+          <AutoSubmitSelect name="cat" defaultValue={cat} aria-label="Loại" className="input sm:w-40">
+            <option value="">Mọi loại</option>
+            {Object.entries(CATEGORY_LABEL).map(([value, label]) => (
+              <option key={value} value={value}>
+                {label}
+              </option>
+            ))}
+          </AutoSubmitSelect>
+          {brands.length > 0 && cat !== "IPHONE" && (
+            <AutoSubmitSelect name="brand" defaultValue={brandId ?? ""} aria-label="Thương hiệu" className="input sm:w-44">
+              <option value="">Mọi thương hiệu</option>
               {brands.map((b) => (
                 <option key={b.id} value={b.id}>
                   {b.name}
                 </option>
               ))}
-            </select>
+            </AutoSubmitSelect>
           )}
-          <label className="relative min-w-0 flex-1 sm:max-w-sm">
-            <Search
-              size={16}
-              className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-slate-400"
-              aria-hidden
-            />
-            <input
-              name="q"
-              type="search"
-              defaultValue={q}
-              placeholder="Tìm tên, mã / IMEI..."
-              aria-label="Tìm sản phẩm"
-              className="input pl-9"
-            />
-          </label>
-          <button className="btn-secondary order-last shrink-0" aria-label="Tìm">
-            <Search size={16} className="sm:hidden" aria-hidden />
-            <span className="hidden sm:inline">Tìm</span>
-          </button>
-        </form>
+        </Form>
       </div>
 
       <p className="-mt-2 px-1 text-sm text-slate-500 sm:hidden">{total} sản phẩm</p>
@@ -287,7 +273,7 @@ export default async function PricesPage({ searchParams }: { searchParams: Promi
                 <div className="min-w-0 flex-1">
                   <div className="flex items-start justify-between gap-2">
                     <p className="min-w-0 leading-snug font-semibold">{p.name}</p>
-                    <p className="shrink-0 font-bold text-[#1677ff] tabular-nums">{formatVND(p.price)}</p>
+                    <PriceText product={p} className="shrink-0 font-bold text-[#1677ff]" />
                   </div>
                   <p className="mt-0.5 text-sm text-slate-600">
                     {[p.brand?.name, capacityLabel(p), p.variant, !cat && CATEGORY_LABEL[p.category]]
@@ -299,7 +285,7 @@ export default async function PricesPage({ searchParams }: { searchParams: Promi
                       {[p.code && `Mã ${p.code}`, p.ownerBranch && `Hàng của ${p.ownerBranch.name}`].filter(Boolean).join(" · ")}
                     </p>
                   )}
-                  {isAdmin && p.costPrice != null && <ProfitLine cost={p.costPrice} price={p.price} />}
+                  {isAdmin && p.costPrice != null && <ProfitLine cost={p.costPrice} price={sellingPrice(p)} />}
                   <div className="mt-2 flex flex-wrap items-center gap-1.5">
                     <ConditionBadge condition={p.condition} />
                     {!isSingleUnit(p) && st === "AVAILABLE" && <QtyBadge value={p.quantity} />}
@@ -387,15 +373,15 @@ export default async function PricesPage({ searchParams }: { searchParams: Promi
                     </td>
                   )}
                   <td className="text-right font-semibold whitespace-nowrap text-slate-900 tabular-nums">
-                    {formatVND(p.price)}
+                    <PriceText product={p} />
                   </td>
                   {isAdmin && (
                     <td
                       className={`text-right whitespace-nowrap tabular-nums ${
-                        p.costPrice == null ? "" : p.price - p.costPrice >= 0 ? "text-green-700" : "text-red-600"
+                        p.costPrice == null ? "" : sellingPrice(p) - p.costPrice >= 0 ? "text-green-700" : "text-red-600"
                       }`}
                     >
-                      {p.costPrice != null ? formatVND(p.price - p.costPrice) : "—"}
+                      {p.costPrice != null ? formatVND(sellingPrice(p) - p.costPrice) : "—"}
                     </td>
                   )}
                   <td className="whitespace-nowrap">{p.warrantyMonths > 0 ? `${p.warrantyMonths} tháng` : "—"}</td>
@@ -474,6 +460,24 @@ function StatusBadge({
     <span className="inline-flex flex-col">
       <span className={`badge ${STATUS_BADGE.SOLD}`}>Đã bán · {branch ?? "?"}</span>
       {date && <span className="mt-0.5 text-xs text-slate-400">{date === today ? "Hôm nay" : formatDate(date)}</span>}
+    </span>
+  );
+}
+
+/** Giá bán; có giá sale thì hiện giá sale + giá gốc gạch ngang */
+function PriceText({
+  product,
+  className = "",
+}: {
+  product: { category: string; price: number; salePrice: number | null };
+  className?: string;
+}) {
+  const sell = sellingPrice(product);
+  if (sell === product.price) return <span className={`tabular-nums ${className}`}>{formatVND(product.price)}</span>;
+  return (
+    <span className={`flex flex-col items-end tabular-nums ${className}`}>
+      <span className="text-red-600">{formatVND(sell)}</span>
+      <s className="text-xs font-normal text-slate-400">{formatVND(product.price)}</s>
     </span>
   );
 }

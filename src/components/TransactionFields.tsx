@@ -24,6 +24,7 @@ export function TransactionFields({
   saleSuggestions,
   repairSuggestions,
   giftOptions = [],
+  installment = false,
 }: {
   shiftId: number;
   bankAccounts: string[];
@@ -31,14 +32,21 @@ export function TransactionFields({
   repairSuggestions: PriceSuggestion[];
   /** Phụ kiện còn hàng để tặng kèm (giá 0 đ) */
   giftOptions?: PriceSuggestion[];
+  /** Bán trả góp qua công ty tài chính: chỉ bán hàng, nhập trả trước + công ty tài chính */
+  installment?: boolean;
 }) {
   const [kind, setKind] = useState<"SALE" | "REPAIR">("SALE");
+  const [downPayment, setDownPayment] = useState("");
   const [payment, setPayment] = useState<"CASH" | "TRANSFER">("CASH");
   const [price, setPrice] = useState("");
   const [productId, setProductId] = useState("");
   const [productName, setProductName] = useState("");
   const [warranty, setWarranty] = useState(0);
-  const needCustomer = warranty > 0;
+  // Trả góp luôn cần thông tin khách (hợp đồng với công ty tài chính)
+  const needCustomer = installment || warranty > 0;
+  const financed = Math.max(0, Number(price || 0) - Number(downPayment || 0));
+  // Trả góp không trả trước thì không có tiền vào → không cần chọn TM / CK
+  const receivesMoney = !installment || Number(downPayment || 0) > 0;
   const suggestions = kind === "REPAIR" ? repairSuggestions : saleSuggestions;
   const accountListId = `bank-accounts-${shiftId}`;
 
@@ -69,27 +77,22 @@ export function TransactionFields({
       <input type="hidden" name="kind" value={kind} />
       <input type="hidden" name="paymentMethod" value={payment} />
       <input type="hidden" name="productId" value={kind === "SALE" ? productId : ""} />
+      {installment && <input type="hidden" name="installment" value="1" />}
 
-      <div className="col-span-full flex flex-wrap gap-3">
-        <Segmented
-          label="Loại"
-          value={kind}
-          onChange={changeKind}
-          options={[
-            { value: "SALE", label: "Bán hàng" },
-            { value: "REPAIR", label: "Sửa chữa" },
-          ]}
-        />
-        <Segmented
-          label="Thanh toán"
-          value={payment}
-          onChange={setPayment}
-          options={[
-            { value: "CASH", label: "Tiền mặt (TM)" },
-            { value: "TRANSFER", label: "Chuyển khoản (CK)" },
-          ]}
-        />
-      </div>
+      {!installment && (
+        <div className="col-span-full flex flex-wrap gap-3">
+          <Segmented
+            label="Loại"
+            value={kind}
+            onChange={changeKind}
+            options={[
+              { value: "SALE", label: "Bán hàng" },
+              { value: "REPAIR", label: "Sửa chữa" },
+            ]}
+          />
+          <PaymentSegmented value={payment} onChange={setPayment} />
+        </div>
+      )}
 
       <div className="field sm:col-span-2">
         <span>{kind === "REPAIR" ? "Nội dung sửa chữa *" : "Tên sản phẩm *"}</span>
@@ -110,11 +113,51 @@ export function TransactionFields({
         )}
       </div>
       <label className="field">
-        <span>Giá tiền *</span>
+        <span>{installment ? "Giá bán *" : "Giá tiền *"}</span>
         <MoneyInput name="price" required value={price} onChange={setPrice} />
       </label>
 
-      {payment === "TRANSFER" && (
+      {installment && (
+        <>
+          <label className="field">
+            <span>Công ty tài chính *</span>
+            <input
+              name="financeCompany"
+              required
+              list={`finance-companies-${shiftId}`}
+              autoComplete="off"
+              className="input"
+              placeholder="VD: Home Credit"
+            />
+            <datalist id={`finance-companies-${shiftId}`}>
+              {FINANCE_COMPANIES.map((c) => (
+                <option key={c} value={c} />
+              ))}
+            </datalist>
+          </label>
+          <label className="field">
+            <span>Số hợp đồng</span>
+            <input name="financeContract" autoComplete="off" className="input" />
+          </label>
+          <label className="field">
+            <span>Khách trả trước *</span>
+            <MoneyInput name="downPayment" required value={downPayment} onChange={setDownPayment} />
+          </label>
+          <div className="field">
+            <span>Còn lại (công ty tài chính trả)</span>
+            <p className="flex h-10 items-center rounded-md bg-fuchsia-50 px-3 font-semibold text-fuchsia-800 tabular-nums">
+              {financed.toLocaleString("vi-VN")} đ
+            </p>
+          </div>
+          {receivesMoney && (
+            <div className="col-span-full">
+              <PaymentSegmented value={payment} onChange={setPayment} label="Khách trả trước bằng" />
+            </div>
+          )}
+        </>
+      )}
+
+      {payment === "TRANSFER" && receivesMoney && (
         <label className="field">
           <span>Tài khoản nhận tiền *</span>
           <input
@@ -157,7 +200,9 @@ export function TransactionFields({
       </label>
       {needCustomer && (
         <p className="col-span-full -mt-1 text-xs text-amber-700">
-          Có bảo hành: bắt buộc nhập tên và số điện thoại khách để tra cứu sau này.
+          {installment
+            ? "Bán trả góp: bắt buộc nhập tên và số điện thoại khách."
+            : "Có bảo hành: bắt buộc nhập tên và số điện thoại khách để tra cứu sau này."}
         </p>
       )}
       {kind === "SALE" && <GiftList options={giftOptions} />}
@@ -166,6 +211,31 @@ export function TransactionFields({
         <input name="note" className="input" />
       </label>
     </>
+  );
+}
+
+/** Công ty tài chính hay gặp — gợi ý khi nhập, vẫn gõ tên khác được */
+const FINANCE_COMPANIES = ["Home Credit", "FE Credit", "HD Saison", "Mcredit", "Shinhan Finance", "Mirae Asset", "Samsung Finance+", "Kredivo", "Home PayLater"];
+
+function PaymentSegmented({
+  value,
+  onChange,
+  label = "Thanh toán",
+}: {
+  value: "CASH" | "TRANSFER";
+  onChange: (v: "CASH" | "TRANSFER") => void;
+  label?: string;
+}) {
+  return (
+    <Segmented
+      label={label}
+      value={value}
+      onChange={onChange}
+      options={[
+        { value: "CASH", label: "Tiền mặt (TM)" },
+        { value: "TRANSFER", label: "Chuyển khoản (CK)" },
+      ]}
+    />
   );
 }
 

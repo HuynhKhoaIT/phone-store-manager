@@ -122,6 +122,7 @@ export async function changeOwnPassword(fd: FormData): Promise<ActionResult> {
   if (!verifyPassword(str(fd, "currentPassword"), user.passwordHash)) return { error: "Mật khẩu hiện tại không đúng." };
   const next = str(fd, "newPassword");
   if (next.length < 6) return { error: "Mật khẩu mới tối thiểu 6 ký tự." };
+  if (next !== str(fd, "confirmPassword")) return { error: "Xác nhận mật khẩu mới không khớp." };
   await prisma.user.update({ where: { id: me.id }, data: { passwordHash: hashPassword(next) } });
   return {};
 }
@@ -268,11 +269,25 @@ export async function addTransaction(fd: FormData): Promise<ActionResult> {
   const warrantyMonths = warranty(fd);
   const customerName = optional(fd, "customerName");
   const customerPhone = optional(fd, "customerPhone");
+  // Bán trả góp qua công ty tài chính: khách trả trước (TM/CK), phần còn lại công ty tài chính trả sau
+  const installment = kind === "SALE" && str(fd, "installment") === "1";
+  const financeCompany = installment ? optional(fd, "financeCompany") : null;
+  const downPayment = installment ? money(fd, "downPayment") : null;
 
   if (!productName)
     return { error: kind === "REPAIR" ? "Vui lòng nhập nội dung sửa chữa." : "Vui lòng nhập tên sản phẩm." };
   if (!Number.isFinite(price) || price <= 0) return { error: "Vui lòng nhập giá tiền." };
-  if (paymentMethod === "TRANSFER" && !bankAccount) return { error: "Chuyển khoản thì phải ghi tài khoản nhận tiền." };
+  if (installment) {
+    if (!financeCompany) return { error: "Vui lòng nhập công ty tài chính." };
+    if (downPayment == null || !Number.isFinite(downPayment) || downPayment < 0)
+      return { error: "Vui lòng nhập số tiền khách trả trước (không trả trước thì nhập 0)." };
+    if (downPayment >= price) return { error: "Tiền trả trước phải nhỏ hơn giá bán." };
+    if (!customerName || !customerPhone) return { error: "Bán trả góp bắt buộc nhập tên và số điện thoại khách hàng." };
+  }
+  // Trả góp không trả trước thì không có tiền vào → không cần tài khoản nhận
+  const receivesMoney = !installment || (downPayment ?? 0) > 0;
+  if (paymentMethod === "TRANSFER" && receivesMoney && !bankAccount)
+    return { error: "Chuyển khoản thì phải ghi tài khoản nhận tiền." };
   if (Number.isNaN(warrantyMonths)) return { error: "Bảo hành phải từ 0 đến 12 tháng." };
   if (warrantyMonths > 0 && (!customerName || !customerPhone))
     return { error: "Có bảo hành thì bắt buộc nhập tên và số điện thoại khách hàng." };
@@ -318,6 +333,9 @@ export async function addTransaction(fd: FormData): Promise<ActionResult> {
         customerName,
         customerPhone: customerPhone?.replace(/[ .-]/g, "") ?? null,
         note: optional(fd, "note"),
+        financeCompany,
+        financeContract: installment ? optional(fd, "financeContract") : null,
+        downPayment,
         gifts: {
           create: gifts.map((g) => ({
             productId: g.product.id,
@@ -345,6 +363,7 @@ export async function addTransaction(fd: FormData): Promise<ActionResult> {
     revalidateTag(TAGS.prices);
     revalidatePath("/products");
   }
+  if (installment) revalidatePath("/installments");
   revalidatePath(`/day/${found.shift.date}`);
   return {};
 }
@@ -354,8 +373,14 @@ export async function deleteTransaction(id: number): Promise<ActionResult> {
   if (!me) return NOT_LOGGED_IN;
   // Chỉ admin được xoá giao dịch; nhân viên nhập sai thì báo admin xoá
   if (!isAdmin(me)) return NO_PERMISSION;
-  const tx = await prisma.transaction.findUnique({ where: { id }, include: { gifts: true } });
+  const tx = await prisma.transaction.findUnique({
+    where: { id },
+    include: { gifts: true, _count: { select: { financePayments: true } } },
+  });
   if (!tx) return { error: "Không tìm thấy giao dịch." };
+  // Tiền trả góp đã thu nằm trong tiền của ca khác — xoá các lần thu trước để tiền ca không bị lệch
+  if (tx._count.financePayments > 0)
+    return { error: "Đơn trả góp này đã ghi nhận tiền công ty tài chính trả. Xoá các lần thu ở trang Bán trả góp trước." };
   const found = await getEditableShift(me, tx.shiftId);
   if ("error" in found) return { error: found.error };
   const product = tx.productId ? await prisma.product.findUnique({ where: { id: tx.productId } }) : null;
@@ -378,7 +403,90 @@ export async function deleteTransaction(id: number): Promise<ActionResult> {
     revalidateTag(TAGS.prices);
     revalidatePath("/products", "layout");
   }
+  if (tx.financeCompany) revalidatePath("/installments");
   revalidatePath(`/day/${found.shift.date}`);
+  return {};
+}
+
+/* ---------------- Bán trả góp ---------------- */
+
+/**
+ * Ghi nhận tiền trả góp (thường công ty tài chính chuyển phần còn lại).
+ * Nhân viên: phải đang trong ca hôm nay ở chi nhánh hiện tại — tiền cộng vào TM / CK của ca.
+ * Admin không có ca → chỉ ghi sổ.
+ */
+export async function recordInstallmentPayment(fd: FormData): Promise<ActionResult> {
+  const me = await getSessionUser();
+  if (!me) return NOT_LOGGED_IN;
+  if (!can(me, "sell")) return NO_PERMISSION;
+  const branch = await getCurrentBranch();
+  if (!branch) return { error: "Vui lòng chọn chi nhánh làm việc." };
+
+  const tx = await prisma.transaction.findUnique({
+    where: { id: Number(str(fd, "transactionId")) },
+    include: { shift: { select: { branchId: true } }, financePayments: { select: { amount: true } } },
+  });
+  if (!tx || !tx.financeCompany) return { error: "Không tìm thấy đơn trả góp." };
+  if (tx.shift.branchId !== branch.id) return { error: "Đơn trả góp này thuộc chi nhánh khác." };
+  const remaining = tx.price - (tx.downPayment ?? 0) - tx.financePayments.reduce((s, p) => s + p.amount, 0);
+  if (remaining <= 0) return { error: "Đơn này đã thanh toán đủ." };
+
+  const amount = money(fd, "amount");
+  const paymentMethod = str(fd, "paymentMethod") === "CASH" ? "CASH" : "TRANSFER";
+  const bankAccount = paymentMethod === "TRANSFER" ? optional(fd, "bankAccount") : null;
+  if (!Number.isFinite(amount) || amount <= 0) return { error: "Vui lòng nhập số tiền nhận được." };
+  if (amount > remaining) return { error: `Số tiền lớn hơn phần còn lại (${remaining.toLocaleString("vi-VN")} đ).` };
+  if (paymentMethod === "TRANSFER" && !bankAccount) return { error: "Chuyển khoản thì phải ghi tài khoản nhận tiền." };
+
+  const today = todayVN();
+  let shiftId: number | null = null;
+  if (!isAdmin(me)) {
+    const shift = await prisma.shift.findFirst({
+      where: { userId: me.id, branchId: branch.id, date: today, closedAt: null },
+      orderBy: { id: "desc" },
+    });
+    if (!shift) return { error: "Bạn cần vào ca trước khi ghi nhận tiền trả góp." };
+    shiftId = shift.id;
+  }
+
+  await prisma.$transaction([
+    prisma.installmentPayment.create({
+      data: {
+        transactionId: tx.id,
+        shiftId,
+        date: today,
+        amount,
+        paymentMethod,
+        bankAccount,
+        note: optional(fd, "note"),
+        createdBy: me.name,
+      },
+    }),
+    ...(amount === remaining
+      ? [prisma.transaction.update({ where: { id: tx.id }, data: { financePaidAt: new Date() } })]
+      : []),
+  ]);
+  revalidatePath("/installments");
+  revalidatePath(`/day/${today}`);
+  return {};
+}
+
+/** Xoá một lần thu trả góp (ghi nhầm) — chỉ admin; ca nhận tiền đã chốt thì phải mở lại ca trước. */
+export async function deleteInstallmentPayment(id: number): Promise<ActionResult> {
+  const me = await getSessionUser();
+  if (!me || !isAdmin(me)) return NO_PERMISSION;
+  const payment = await prisma.installmentPayment.findUnique({
+    where: { id },
+    include: { shift: { select: { closedAt: true, date: true } } },
+  });
+  if (!payment) return { error: "Không tìm thấy lần thu này." };
+  if (payment.shift?.closedAt) return { error: "Ca nhận tiền này đã chốt — mở lại ca trước khi xoá." };
+  await prisma.$transaction([
+    prisma.installmentPayment.delete({ where: { id } }),
+    prisma.transaction.update({ where: { id: payment.transactionId }, data: { financePaidAt: null } }),
+  ]);
+  revalidatePath("/installments");
+  if (payment.shift) revalidatePath(`/day/${payment.shift.date}`);
   return {};
 }
 
@@ -576,14 +684,15 @@ export async function saveProduct(fd: FormData): Promise<ActionResult> {
 
   // Hiển thị trên web marketing
   const showOnWeb = str(fd, "showOnWeb") === "on";
-  const salePriceRaw = showOnWeb ? str(fd, "salePrice") : "";
+  // Điện thoại: giá sale dùng cả khi bán hàng; phụ kiện: giá khuyến mãi chỉ cho web
+  const salePriceRaw = isPhone || showOnWeb ? str(fd, "salePrice") : "";
   const salePrice = salePriceRaw ? money(fd, "salePrice") : null;
   const imageUrls = str(fd, "imageUrls")
     .split(/\r?\n/)
     .map((u) => u.trim())
     .filter(Boolean);
   if (salePrice != null && (!Number.isFinite(salePrice) || salePrice <= 0 || salePrice >= price))
-    return { error: "Giá khuyến mãi phải lớn hơn 0 và nhỏ hơn giá bán." };
+    return { error: isPhone ? "Giá sale phải lớn hơn 0 và nhỏ hơn giá bán." : "Giá khuyến mãi phải lớn hơn 0 và nhỏ hơn giá bán." };
   if (imageUrls.length > 10) return { error: "Tối đa 10 ảnh." };
   if (imageUrls.some((u) => !/^https?:\/\/\S+$/i.test(u) || u.length > 500))
     return { error: "Link ảnh phải bắt đầu bằng http:// hoặc https://" };

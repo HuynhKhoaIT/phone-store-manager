@@ -27,7 +27,11 @@ export default async function AccountPage() {
           </label>
           <label className="field">
             <span>Mật khẩu mới</span>
-            <input name="newPassword" type="password" required minLength={6} className="input" />
+            <input name="newPassword" type="password" required minLength={6} autoComplete="new-password" className="input" />
+          </label>
+          <label className="field">
+            <span>Nhập lại mật khẩu mới</span>
+            <input name="confirmPassword" type="password" required minLength={6} autoComplete="new-password" className="input" />
           </label>
         </ActionForm>
       </div>

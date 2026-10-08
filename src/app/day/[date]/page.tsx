@@ -5,7 +5,7 @@ import { prisma } from "@/lib/db";
 import { requireUser } from "@/lib/auth";
 import { getCurrentBranch } from "@/lib/branch";
 import { can } from "@/lib/permissions";
-import { getPriceSuggestions } from "@/lib/prices";
+import { getRecentBankAccounts, getSaleSuggestions } from "@/lib/prices";
 import { summarize } from "@/lib/summary";
 import { profitOf } from "@/lib/profit";
 import { getDayChecklist } from "@/lib/checklist";
@@ -34,45 +34,36 @@ export default async function DayPage({ params }: { params: Promise<{ date: stri
   const branch = await getCurrentBranch();
   if (!branch) redirect("/choose-branch");
 
-  const [shifts, accounts, suggestions, checklist] = await Promise.all([
+  const [shifts, bankAccounts, { saleSuggestions, repairSuggestions, giftOptions }, checklist] = await Promise.all([
     prisma.shift.findMany({
       where: { date, branchId: branch.id },
-      include: { transactions: { orderBy: { createdAt: "asc" }, include: { gifts: true } } },
+      include: {
+        transactions: { orderBy: { createdAt: "asc" }, include: { gifts: true } },
+        // Tiền trả góp (công ty tài chính) thu trong ca — cộng vào TM / CK của ca
+        financePayments: {
+          orderBy: { createdAt: "asc" },
+          include: { transaction: { select: { productName: true, customerName: true, financeCompany: true } } },
+        },
+      },
       orderBy: [{ checkIn: "asc" }, { id: "asc" }],
     }),
-    prisma.transaction.findMany({
-      where: { bankAccount: { not: null } },
-      select: { bankAccount: true },
-      distinct: ["bankAccount"],
-      orderBy: { createdAt: "desc" },
-      take: 30,
-    }),
-    getPriceSuggestions(),
+    getRecentBankAccounts(),
+    getSaleSuggestions(branch.id),
     getDayChecklist(date, branch.id),
   ]);
   // Checklist nằm ở trang Việc cần làm; ở đây chỉ đếm việc chưa xong để cảnh báo khi chốt ca
-  // Mỗi quán quản lý hàng riêng: hàng quán khác ghi rõ "(hàng …)" — bán / tặng sẽ tự ghi sổ Mượn hàng.
-  // Hàng của quán mình xếp trước
-  const saleSuggestions = suggestions.sale
-    .map((s) =>
-      s.ownerBranchId && s.ownerBranchId !== branch.id ? { ...s, label: `${s.label} (hàng ${s.ownerName})` } : s,
-    )
-    // Hàng chưa gắn chi nhánh coi như của quán mình
-    .sort(
-      (a, b) =>
-        Number((a.ownerBranchId ?? branch.id) !== branch.id) - Number((b.ownerBranchId ?? branch.id) !== branch.id),
-    );
-  const giftOptions = saleSuggestions.filter((s) => s.giftable && (s.quantity ?? 0) > 0);
   const checklistLeft = checklist.filter((c) => !c.check).length;
 
-  const day = summarize(shifts.flatMap((s) => s.transactions));
+  const day = summarize(
+    shifts.flatMap((s) => s.transactions),
+    shifts.flatMap((s) => s.financePayments),
+  );
   // Lãi chỉ admin xem — cùng công thức Dashboard / Báo cáo
   const dayProfit = isAdmin ? profitOf(shifts.flatMap((s) => s.transactions)) : null;
   const hasOpenShift = shifts.some((s) => s.userId === me.id && !s.closedAt);
   // Chỉ nhân viên vào ca (admin chỉ xem / quản lý ca của nhân viên)
   const canOpenShift = !isAdmin && canSell && !hasOpenShift && date === today;
   const hadShift = shifts.some((s) => s.userId === me.id);
-  const bankAccounts = accounts.map((a) => a.bankAccount!).filter(Boolean);
 
   const openShiftDialog = (
     <FormDialog title={`Vào ca — ${me.name}`} triggerLabel={hadShift ? "Vào ca mới" : "Vào ca"}>
@@ -130,7 +121,12 @@ export default async function DayPage({ params }: { params: Promise<{ date: stri
       />
 
       <div className={`grid grid-cols-2 gap-3 ${dayProfit ? "md:grid-cols-5" : "md:grid-cols-4"}`}>
-        <Stat label="Doanh thu ngày" value={formatVND(day.total)} sub={`${day.count} giao dịch`} strong />
+        <Stat
+          label="Doanh thu ngày"
+          value={formatVND(day.total)}
+          sub={`${day.count} giao dịch${day.financed ? ` · trả góp chờ cty TC ${formatVND(day.financed)}` : ""}`}
+          strong
+        />
         {dayProfit && (
           <Stat
             label="Lãi gộp ngày"
@@ -174,7 +170,7 @@ export default async function DayPage({ params }: { params: Promise<{ date: stri
           bankAccounts={bankAccounts}
           saleSuggestions={saleSuggestions}
           giftOptions={giftOptions}
-          repairSuggestions={suggestions.repair}
+          repairSuggestions={repairSuggestions}
         />
       ))}
     </div>

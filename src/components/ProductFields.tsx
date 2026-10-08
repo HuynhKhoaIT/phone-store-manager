@@ -61,10 +61,13 @@ export function ProductFields({
   const [status, setStatus] = useState<ProductStatus>(product ? productStatus(product) : "AVAILABLE");
   const [cost, setCost] = useState(product?.costPrice != null ? String(product.costPrice) : "");
   const [price, setPrice] = useState(product ? String(product.price) : "");
+  const [sale, setSale] = useState(product?.salePrice != null ? String(product.salePrice) : "");
   const [onWeb, setOnWeb] = useState(product?.showOnWeb ?? false);
   const isIphone = category === "IPHONE";
   const isPhone = category !== "ACCESSORY";
-  const profit = cost && price ? Number(price) - Number(cost) : null;
+  // Điện thoại có giá sale thì lãi tính theo giá sale (giá thực bán)
+  const sellPrice = isPhone && Number(sale) > 0 && Number(sale) < Number(price) ? sale : price;
+  const profit = cost && sellPrice ? Number(sellPrice) - Number(cost) : null;
 
   return (
     <>
@@ -188,6 +191,13 @@ export function ProductFields({
         <span>Giá bán *</span>
         <MoneyInput name="price" required value={price} onChange={setPrice} />
       </label>
+      {isPhone && (
+        <label className="field">
+          <span>Giá sale</span>
+          <MoneyInput name="salePrice" value={sale} onChange={setSale} />
+          <small className="text-slate-500">Để trống nếu không giảm. Có giá sale thì bán hàng và web dùng giá này.</small>
+        </label>
+      )}
       {profit != null && (
         <p className={`col-span-full -mt-1 text-sm ${profit >= 0 ? "text-green-700" : "text-red-600"}`}>
           Lãi dự kiến: <b className="tabular-nums">{profit.toLocaleString("vi-VN")} đ</b>
@@ -278,11 +288,14 @@ export function ProductFields({
         </label>
         {onWeb && (
           <div className="mt-3 grid gap-3 sm:grid-cols-2">
-            <label className="field">
-              <span>Giá khuyến mãi</span>
-              <MoneyInput name="salePrice" defaultValue={product?.salePrice} />
-              <small className="text-slate-500">Để trống nếu không giảm giá. Phải nhỏ hơn giá bán.</small>
-            </label>
+            {/* Điện thoại nhập giá sale ở trên (cạnh giá bán) */}
+            {!isPhone && (
+              <label className="field">
+                <span>Giá khuyến mãi</span>
+                <MoneyInput name="salePrice" defaultValue={product?.salePrice} />
+                <small className="text-slate-500">Để trống nếu không giảm giá. Phải nhỏ hơn giá bán.</small>
+              </label>
+            )}
             <label className="field">
               <span>Đường dẫn (slug)</span>
               <input

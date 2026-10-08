@@ -57,7 +57,10 @@ export async function GET(req: Request) {
         t.giftCost || null,
         // Lãi = giá bán − giá nhập − giá vốn quà tặng (cùng công thức lib/profit.ts)
         t.costPrice != null ? t.price - t.costPrice - t.giftCost : null,
-        PAYMENT_LABEL[t.paymentMethod],
+        // Trả góp: "Trả góp Home Credit (trả trước 2.000.000 TM)"
+        t.financeCompany
+          ? `Trả góp ${t.financeCompany} (trả trước ${(t.downPayment ?? 0).toLocaleString("vi-VN")} ${PAYMENT_LABEL[t.paymentMethod]})`
+          : PAYMENT_LABEL[t.paymentMethod],
         t.bankAccount,
         t.warrantyMonths || null,
         t.customerName,

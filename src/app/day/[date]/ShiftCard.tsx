@@ -1,6 +1,6 @@
 import Link from "next/link";
-import { Gift, LogOut, TriangleAlert } from "lucide-react";
-import type { Shift, Transaction, TransactionGift } from "@prisma/client";
+import { Gift, HandCoins, LogOut, TriangleAlert } from "lucide-react";
+import type { InstallmentPayment, Shift, Transaction, TransactionGift } from "@prisma/client";
 import { summarize } from "@/lib/summary";
 import { profitOf } from "@/lib/profit";
 import { formatTimeVN, formatVND, KIND_LABEL } from "@/lib/format";
@@ -22,7 +22,12 @@ export function ShiftCard({
   repairSuggestions,
   giftOptions,
 }: {
-  shift: Shift & { transactions: (Transaction & { gifts: TransactionGift[] })[] };
+  shift: Shift & {
+    transactions: (Transaction & { gifts: TransactionGift[] })[];
+    financePayments: (InstallmentPayment & {
+      transaction: { productName: string; customerName: string | null; financeCompany: string | null };
+    })[];
+  };
   canEdit: boolean;
   isAdmin: boolean;
   defaultCheckOut: string;
@@ -32,7 +37,8 @@ export function ShiftCard({
   repairSuggestions: PriceSuggestion[];
   giftOptions: PriceSuggestion[];
 }) {
-  const sum = summarize(shift.transactions);
+  // Tiền vào ca = tiền bán (trả góp: chỉ phần trả trước) + tiền trả góp thu trong ca
+  const sum = summarize(shift.transactions, shift.financePayments);
   const expectedCash = shift.openingCash + sum.cash;
   const closed = !!shift.closedAt;
   // Chỉ admin được xoá giao dịch (khi ca còn mở)
@@ -101,7 +107,7 @@ export function ShiftCard({
                   </p>
                 )}
                 <p className="mt-2 text-sm text-slate-600">
-                  Tiền mặt phải có = nhận đầu ca {formatVND(shift.openingCash)} + tiền mặt bán được {formatVND(sum.cash)} ={" "}
+                  Tiền mặt phải có = nhận đầu ca {formatVND(shift.openingCash)} + tiền mặt thu được {formatVND(sum.cash)} ={" "}
                   <b>{formatVND(expectedCash)}</b>
                 </p>
                 <ActionForm
@@ -168,7 +174,7 @@ export function ShiftCard({
               <div className="flex flex-wrap items-center gap-1.5 text-xs text-slate-500">
                 <span className="tabular-nums">{formatTimeVN(t.createdAt)}</span>
                 <KindBadge kind={t.kind} />
-                <PaymentBadge method={t.paymentMethod} />
+                <TxPayment tx={t} />
                 {t.warrantyMonths > 0 && <span className="badge bg-slate-100 text-slate-700">BH {t.warrantyMonths} tháng</span>}
               </div>
               {t.paymentMethod === "TRANSFER" && t.bankAccount && (
@@ -227,7 +233,7 @@ export function ShiftCard({
                     </td>
                   )}
                   <td className="whitespace-nowrap">
-                    <PaymentBadge method={t.paymentMethod} />
+                    <TxPayment tx={t} />
                     {t.paymentMethod === "TRANSFER" && <div className="text-xs text-slate-500">{t.bankAccount}</div>}
                   </td>
                   <td className="whitespace-nowrap">{t.warrantyMonths > 0 ? `${t.warrantyMonths} tháng` : "—"}</td>
@@ -254,6 +260,27 @@ export function ShiftCard({
         </>
       ) : (
         <p className="text-sm text-slate-500">Chưa có giao dịch nào.</p>
+      )}
+
+      {shift.financePayments.length > 0 && (
+        <div className="rounded-lg border border-fuchsia-100 bg-fuchsia-50/40 p-3 text-sm">
+          <p className="mb-1 flex items-center gap-1.5 font-medium text-fuchsia-900">
+            <HandCoins size={16} aria-hidden /> Thu tiền trả góp trong ca: {formatVND(sum.collected)}
+          </p>
+          <ul className="space-y-0.5 text-slate-700">
+            {shift.financePayments.map((p) => (
+              <li key={p.id} className="flex flex-wrap items-center gap-x-2">
+                <span className="tabular-nums">{formatTimeVN(p.createdAt)}</span>
+                <span>
+                  {p.transaction.financeCompany} · {p.transaction.productName}
+                  {p.transaction.customerName && ` · ${p.transaction.customerName}`}
+                </span>
+                <b className="tabular-nums">{formatVND(p.amount)}</b>
+                <PaymentBadge method={p.paymentMethod} />
+              </li>
+            ))}
+          </ul>
+        </div>
       )}
 
       {sum.byAccount.length > 0 && (
@@ -314,6 +341,22 @@ function PaymentBadge({ method }: { method: string }) {
     <span className="badge bg-violet-100 text-violet-800">CK</span>
   ) : (
     <span className="badge bg-emerald-100 text-emerald-800">TM</span>
+  );
+}
+
+/** Hình thức thanh toán; bán trả góp: trả trước bao nhiêu (TM/CK), còn lại công ty tài chính trả */
+function TxPayment({ tx }: { tx: Transaction }) {
+  if (!tx.financeCompany) return <PaymentBadge method={tx.paymentMethod} />;
+  const down = tx.downPayment ?? 0;
+  return (
+    <span className="inline-flex flex-wrap items-center gap-1">
+      <span className="badge bg-fuchsia-100 text-fuchsia-800">Trả góp · {tx.financeCompany}</span>
+      {down > 0 && (
+        <span className="text-xs text-slate-500">
+          trả trước {formatVND(down)} <PaymentBadge method={tx.paymentMethod} />
+        </span>
+      )}
+    </span>
   );
 }
 

@@ -40,6 +40,7 @@ Không có migration files: schema được đồng bộ bằng `prisma db push`
 | `/choose-branch` | Tất cả | Đổi chi nhánh làm việc trong phiên |
 | `/` | Tất cả | Trang chủ: lời chào, chi nhánh đang làm, danh sách chức năng dạng ô (kiểu app) |
 | `/day/[date]` (`/day` chuyển về hôm nay) | Tất cả | Trang chính: vào ca (giờ đi làm + tiền nhận đầu ca), nhập giao dịch, chốt ca (giờ ra về + tiền bàn giao, hiện chênh lệch; cảnh báo nếu checklist còn việc) |
+| `/installments` | Tất cả (quyền `sell`; xoá lần thu: admin) | **Bán trả góp** qua công ty tài chính: form bán giống Bán hàng (`TransactionFields installment`) + công ty tài chính, số hợp đồng, khách trả trước. Danh sách Chờ thanh toán / Đã thanh toán đủ; **Ghi nhận thanh toán** khi công ty tài chính trả phần còn lại. Nhân viên phải đang trong ca (bán và ghi nhận đều vào ca đang mở) |
 | `/tasks` | Tất cả (quyền `sell`) | **Việc cần làm**: nhân viên tick checklist hôm nay của chi nhánh; admin thấy **việc của chủ quán** (Hôm nay / Tuần này / Tháng này), xem lại được ngày khác qua `?date=` |
 | `/products` (Hàng hoá, `/prices` cũ tự chuyển về) | Xem: tất cả · Sửa: admin | Tab **Danh sách hàng hoá**: thống kê (đang bán, đã bán tháng này, giá trị hàng; admin thấy giá trị theo giá nhập + lãi dự kiến) và bảng giá iPhone / Android / Phụ kiện: thương hiệu, RAM/bộ nhớ (điện thoại), mã sản phẩm (IMEI hoặc mã vạch), pin % (iPhone), mới/cũ, bảo hành mặc định, trạng thái Đang bán / Đã bán (tại chi nhánh nào) / Ngừng bán. Admin thấy giá nhập + lãi |
 | `/posts`, `/posts/new`, `/posts/[id]` | Admin | **Tin tức** cho web: danh sách (Đã đăng / Hẹn giờ / Nháp, chuyên mục, tìm kiếm), trang soạn bài riêng (Markdown + Xem trước, chuyên mục Tin tức / Khuyến mãi / Mẹo hay, ảnh bìa, tóm tắt, ngày đăng — tương lai = hẹn giờ, nổi bật) |
@@ -82,6 +83,11 @@ Giao diện (`src/components/AppShell.tsx`, danh sách menu dùng chung ở `src
 - Ngày hết bảo hành = ngày của ca + số tháng (`warrantyEnd` trong `lib/format.ts`, xử lý cuối tháng).
 - Khi nhập, gõ tên sẽ gợi ý từ bảng giá; chọn đúng gợi ý thì tự điền giá + bảo hành (`TransactionFields.tsx`).
 
+**Bán trả góp** (`Transaction.financeCompany` ≠ null, `InstallmentPayment`)
+- Doanh thu tính **đủ giá bán** vào ngày bán như bán thường (Dashboard / Báo cáo / lãi không đổi).
+- Tiền vào ca lúc bán chỉ là `downPayment` (theo `paymentMethod`); phần còn lại `price − downPayment` công ty tài chính trả sau → `InstallmentPayment` gắn với **ca đang mở** của nhân viên ghi nhận (admin ghi nhận thì `shiftId` null). `summarize(txs, collected)` tính TM / CK theo tiền thực nhận, `financed` = phần chờ công ty tài chính.
+- Thu đủ thì đặt `financePaidAt`. Xoá giao dịch trả góp đã có lần thu bị chặn; xoá lần thu (admin) khi ca nhận tiền đã chốt thì phải mở lại ca.
+
 **Sản phẩm trong bảng giá (`Product`)**
 - Trạng thái suy ra từ `active` + `soldBranchId` (`productStatus()` trong `src/lib/product-labels.ts`): Đang bán / Đã bán / Ngừng bán.
 - `code`: IMEI (điện thoại) hoặc mã vạch / mã riêng (phụ kiện), không trùng nhau. **Điện thoại có mã = một máy cụ thể** (`isSingleUnit`): bán qua giao dịch (chọn đúng gợi ý) thì tự đánh dấu Đã bán tại chi nhánh của ca và biến khỏi gợi ý; admin xoá giao dịch thì máy trở lại Đang bán. Phụ kiện có mã không tự đánh dấu.
@@ -89,7 +95,7 @@ Giao diện (`src/components/AppShell.tsx`, danh sách menu dùng chung ở `src
 - `ramGb` / `storageGb` (điện thoại, chọn từ `RAM_OPTIONS` / `STORAGE_OPTIONS`), `batteryHealth` (chỉ iPhone, 1–100). Tên khi bán = `productLabel()`, vd "iPhone 13 Pro Max 6/128GB Xanh (Cũ) - Mã 3567…" → tra bảo hành theo IMEI được.
 
 **Số lượng & chi nhánh của hàng hoá** (`src/lib/stock.ts`)
-- Mỗi quán quản lý nguồn hàng riêng: `Product.ownerBranchId` (bắt buộc khi lưu) + `Product.quantity`. Cùng một phụ kiện ở 2 quán là 2 dòng (`branchTwin` tìm / tạo dòng tương ứng). Trang Hàng hoá mặc định lọc theo quán đang làm; hàng cũ chưa gắn chi nhánh hiện ở mọi quán.
+- Mỗi quán quản lý nguồn hàng riêng: `Product.ownerBranchId` (bắt buộc khi lưu) + `Product.quantity`. Cùng một phụ kiện ở 2 quán là 2 dòng (`branchTwin` tìm / tạo dòng tương ứng). Trang Hàng hoá chỉ hiện hàng của quán đang làm (lọc theo Loại / Thương hiệu, chọn là lọc ngay); hàng cũ chưa gắn chi nhánh hiện ở mọi quán.
 - Máy có IMEI (`isSingleUnit`) luôn SL 1, theo dõi bằng Đang bán / Đã bán. Hàng khác: bán qua trang Bán hàng trừ 1, quà tặng trừ đúng SL, phiếu nhập cộng, phiếu chuyển trừ quán gửi / cộng quán nhận (máy IMEI thì đổi `ownerBranchId`). Xoá giao dịch / phiếu thì hoàn lại. SL có thể âm (không chặn bán) — danh sách hiện đỏ "cần kiểm kho".
 - **Quà tặng kèm** (`TransactionGift`): khi bán, chọn phụ kiện của cửa hàng + SL, giá 0 đ. Giá nhập quà chụp vào `Transaction.giftCost` và cộng vào giá vốn trong `profitOf` → Dashboard / Báo cáo / Hoà vốn / xuất Excel tự trừ.
 - Bán hoặc tặng hàng của quán khác → `consumeBorrowed` ghi sổ Mượn hàng (dùng dòng "đang mượn" có sẵn, tách nếu chỉ dùng một phần). Gợi ý trang Bán hàng ghi "(hàng <quán>)" để nhân viên biết.
@@ -138,7 +144,7 @@ src/lib/auth.ts             # Hash mật khẩu (scrypt), cookie session ký HMA
 src/lib/permissions.ts      # Danh sách quyền nhân viên, can()
 src/lib/branch.ts           # getCurrentBranch, getAllowedBranches, getActiveBranches, getBranches
 src/lib/format.ts           # Tiền, ngày giờ VN, cộng ngày/tháng, warrantyEnd
-src/lib/summary.ts          # summarize(): tổng / bán / sửa / TM / CK / theo tài khoản
+src/lib/summary.ts          # summarize(): tổng / bán / sửa / TM / CK (tiền thực nhận, gồm tiền trả góp thu trong ca) / theo tài khoản
 src/lib/prices.ts           # Nhãn loại máy, gợi ý giá khi nhập giao dịch
 src/lib/checklist.ts        # getDayChecklist()
 src/lib/cache.ts            # Tag cache (branches, users, prices)

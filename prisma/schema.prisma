@@ -48,50 +48,81 @@ model User {
 
 /// Một ca làm việc của một nhân viên trong một ngày tại một chi nhánh.
 model Shift {
-  id           Int           @id @default(autoincrement())
-  date         String // YYYY-MM-DD (giờ Việt Nam)
-  branchId     Int
-  branch       Branch        @relation(fields: [branchId], references: [id])
-  userId       Int?
-  user         User?         @relation(fields: [userId], references: [id])
-  staffName    String
-  checkIn      String // HH:mm
-  openingCash  Int // tiền nhận đầu ca
-  checkOut     String? // HH:mm
-  handoverCash Int? // tiền mặt bàn giao cuối ca
-  closingNote  String?
-  closedAt     DateTime?
-  createdAt    DateTime      @default(now())
-  transactions Transaction[]
+  id              Int                  @id @default(autoincrement())
+  date            String // YYYY-MM-DD (giờ Việt Nam)
+  branchId        Int
+  branch          Branch               @relation(fields: [branchId], references: [id])
+  userId          Int?
+  user            User?                @relation(fields: [userId], references: [id])
+  staffName       String
+  checkIn         String // HH:mm
+  openingCash     Int // tiền nhận đầu ca
+  checkOut        String? // HH:mm
+  handoverCash    Int? // tiền mặt bàn giao cuối ca
+  closingNote     String?
+  closedAt        DateTime?
+  createdAt       DateTime             @default(now())
+  transactions    Transaction[]
+  /// Tiền trả góp thu trong ca (công ty tài chính trả phần còn lại) — cộng vào TM / CK của ca
+  financePayments InstallmentPayment[]
 
   @@index([date, branchId])
 }
 
 model Transaction {
-  id             Int      @id @default(autoincrement())
-  shiftId        Int
-  shift          Shift    @relation(fields: [shiftId], references: [id], onDelete: Cascade)
-  kind           String // SALE | REPAIR
+  id              Int                  @id @default(autoincrement())
+  shiftId         Int
+  shift           Shift                @relation(fields: [shiftId], references: [id], onDelete: Cascade)
+  kind            String // SALE | REPAIR
   /// Sản phẩm trong bảng giá được chọn khi bán (để đánh dấu máy có mã là đã bán, lấy giá nhập)
-  productId      Int?
-  product        Product? @relation(fields: [productId], references: [id], onDelete: SetNull)
-  productName    String
-  loans          BranchLoan[]
-  gifts          TransactionGift[]
-  price          Int
-  costPrice      Int? // giá nhập tại thời điểm bán (lấy từ bảng giá), để tính lợi nhuận
+  productId       Int?
+  product         Product?             @relation(fields: [productId], references: [id], onDelete: SetNull)
+  productName     String
+  loans           BranchLoan[]
+  gifts           TransactionGift[]
+  price           Int
+  costPrice       Int? // giá nhập tại thời điểm bán (lấy từ bảng giá), để tính lợi nhuận
   /// Tổng giá nhập quà tặng kèm (chụp lúc bán) — cộng vào giá vốn khi tính lãi (lib/profit.ts)
-  giftCost       Int      @default(0)
-  paymentMethod  String // CASH | TRANSFER
-  bankAccount    String?
-  warrantyMonths Int      @default(0) // 0-12; > 0 thì bắt buộc tên + SĐT khách
-  customerName   String?
-  customerPhone  String?
-  note           String?
-  createdAt      DateTime @default(now())
+  giftCost        Int                  @default(0)
+  paymentMethod   String // CASH | TRANSFER
+  bankAccount     String?
+  warrantyMonths  Int                  @default(0) // 0-12; > 0 thì bắt buộc tên + SĐT khách
+  customerName    String?
+  customerPhone   String?
+  note            String?
+  /// --- Bán trả góp qua công ty tài chính (financeCompany null = bán thường) ---
+  /// Doanh thu vẫn tính đủ `price` vào ngày bán. Tiền vào ca lúc bán chỉ là `downPayment` (theo paymentMethod),
+  /// phần còn lại (price − downPayment) do công ty tài chính trả sau → InstallmentPayment
+  financeCompany  String? // VD: Home Credit, FE Credit
+  financeContract String? // số hợp đồng trả góp
+  downPayment     Int? // khách trả trước
+  financePaidAt   DateTime? // lúc đã thu đủ; null = còn chờ công ty tài chính trả
+  financePayments InstallmentPayment[]
+  createdAt       DateTime             @default(now())
 
   @@index([shiftId])
   @@index([customerPhone])
+  @@index([financeCompany])
+}
+
+/// Một lần thu tiền trả góp (thường là công ty tài chính chuyển phần còn lại)
+model InstallmentPayment {
+  id            Int         @id @default(autoincrement())
+  transactionId Int
+  transaction   Transaction @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+  /// Ca đang làm lúc thu — tiền cộng vào TM / CK của ca để chốt ca khớp. null = admin ghi nhận (không có ca)
+  shiftId       Int?
+  shift         Shift?      @relation(fields: [shiftId], references: [id], onDelete: SetNull)
+  date          String // YYYY-MM-DD
+  amount        Int
+  paymentMethod String // CASH | TRANSFER
+  bankAccount   String?
+  note          String?
+  createdBy     String
+  createdAt     DateTime    @default(now())
+
+  @@index([transactionId])
+  @@index([shiftId])
 }
 
 /// Phiếu hàng hoá: nhập từ nhà cung cấp (IMPORT) hoặc chuyển giữa chi nhánh (TRANSFER).
@@ -207,47 +238,47 @@ model Expense {
 
 /// Bảng giá điện thoại / phụ kiện để nhân viên tra cứu khi bán.
 model Product {
-  id             Int             @id @default(autoincrement())
+  id             Int               @id @default(autoincrement())
   category       String // IPHONE | ANDROID | ACCESSORY
   name           String // VD: iPhone 13 Pro Max
   brandId        Int? // thương hiệu (phụ kiện, Android)
-  brand          Brand?          @relation(fields: [brandId], references: [id])
+  brand          Brand?            @relation(fields: [brandId], references: [id])
   variant        String? // VD: 128GB - Xanh
   ramGb          Int? // điện thoại: RAM (GB)
   storageGb      Int? // điện thoại: bộ nhớ trong (GB), 1TB = 1024
-  condition      String          @default("NEW") // NEW | USED (máy cũ / 99%)
+  condition      String            @default("NEW") // NEW | USED (máy cũ / 99%)
   /// Số lượng còn: máy có IMEI luôn 1 (theo dõi bằng Đang bán / Đã bán); hàng khác trừ khi bán / tặng, cộng khi nhập.
   /// Có thể âm khi số liệu chưa khớp (để không chặn bán hàng)
-  quantity       Int             @default(1)
+  quantity       Int               @default(1)
   price          Int
   costPrice      Int? // giá nhập (chỉ admin thấy) để tính lợi nhuận
-  warrantyMonths Int             @default(0) // bảo hành mặc định khi bán
+  warrantyMonths Int               @default(0) // bảo hành mặc định khi bán
   code           String? // mã sản phẩm: IMEI (máy) hoặc mã vạch / mã riêng (phụ kiện)
   batteryHealth  Int? // chỉ iPhone: tình trạng pin %, vd 88
   /// Đã bán: chi nhánh bán + thời điểm (null = chưa bán). Điện thoại có mã tự đánh dấu khi bán qua giao dịch.
   soldBranchId   Int?
-  soldBranch     Branch?         @relation("ProductSoldAt", fields: [soldBranchId], references: [id])
+  soldBranch     Branch?           @relation("ProductSoldAt", fields: [soldBranchId], references: [id])
   soldAt         DateTime?
   /// Chi nhánh quản lý hàng này (mỗi quán có nguồn hàng riêng). Quán khác bán / tặng → tự ghi sổ Mượn hàng (BranchLoan)
   ownerBranchId  Int?
-  ownerBranch    Branch?         @relation("ProductOwner", fields: [ownerBranchId], references: [id])
+  ownerBranch    Branch?           @relation("ProductOwner", fields: [ownerBranchId], references: [id])
   loans          BranchLoan[]
   gifts          TransactionGift[]
   transactions   Transaction[]
   stockTransfers StockTransfer[]
   note           String? // tình trạng, pin, bảo hành...
   /// --- Hiển thị trên web marketing (API công khai /api/public) ---
-  showOnWeb      Boolean         @default(false) // chỉ sản phẩm bật cờ này mới xuất hiện trên web
+  showOnWeb      Boolean           @default(false) // chỉ sản phẩm bật cờ này mới xuất hiện trên web
   slug           String? // đường dẫn web, tự tạo từ tên nếu để trống (không trùng — kiểm tra trong code)
   description    String? // mô tả cho web
   salePrice      Int? // giá khuyến mãi (nhỏ hơn giá bán)
-  priceOnRequest Boolean         @default(false) // web hiện "Liên hệ" thay giá (giá vẫn dùng nội bộ khi bán)
-  featured       Boolean         @default(false) // nổi bật trên web
-  sortOrder      Int             @default(0) // số nhỏ hiện trước
-  imageUrls      String[]        @default([]) // link ảnh, ảnh đầu là ảnh đại diện
-  active         Boolean         @default(true) // còn bán
-  updatedAt      DateTime        @updatedAt
-  createdAt      DateTime        @default(now())
+  priceOnRequest Boolean           @default(false) // web hiện "Liên hệ" thay giá (giá vẫn dùng nội bộ khi bán)
+  featured       Boolean           @default(false) // nổi bật trên web
+  sortOrder      Int               @default(0) // số nhỏ hiện trước
+  imageUrls      String[]          @default([]) // link ảnh, ảnh đầu là ảnh đại diện
+  active         Boolean           @default(true) // còn bán
+  updatedAt      DateTime          @updatedAt
+  createdAt      DateTime          @default(now())
 
   @@index([category])
   @@index([slug])
