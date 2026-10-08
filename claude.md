@@ -44,7 +44,8 @@ Không có migration files: schema được đồng bộ bằng `prisma db push`
 | `/tasks` | Tất cả (quyền `sell`) | **Việc cần làm**: nhân viên tick checklist hôm nay của chi nhánh; admin thấy **việc của chủ quán** (Hôm nay / Tuần này / Tháng này), xem lại được ngày khác qua `?date=` |
 | `/products` (Hàng hoá, `/prices` cũ tự chuyển về) | Xem: tất cả · Sửa: admin | Tab **Danh sách hàng hoá**: thống kê (đang bán, đã bán tháng này, giá trị hàng; admin thấy giá trị theo giá nhập + lãi dự kiến) và bảng giá iPhone / Android / Phụ kiện: thương hiệu, RAM/bộ nhớ (điện thoại), mã sản phẩm (IMEI hoặc mã vạch), pin % (iPhone), mới/cũ, bảo hành mặc định, trạng thái Đang bán / Đã bán (tại chi nhánh nào) / Ngừng bán. Admin thấy giá nhập + lãi |
 | `/posts`, `/posts/new`, `/posts/[id]` | Admin | **Tin tức** cho web: danh sách (Đã đăng / Hẹn giờ / Nháp, chuyên mục, tìm kiếm), trang soạn bài riêng (Markdown + Xem trước, chuyên mục Tin tức / Khuyến mãi / Mẹo hay, ảnh bìa, tóm tắt, ngày đăng — tương lai = hẹn giờ, nổi bật) |
-| `/api/public/*` | Công khai (không đăng nhập) | API chỉ đọc cho web bán hàng (repo FE riêng `phone-store-shop`): `products`, `products/:slug`, `filters`, `branches`, `repair-prices`, `posts`, `posts/:slug`. Tài liệu: **`docs/public-api.md`**. **Không đổi tên trường / shape** — FE đang dùng |
+| `/promotions` | Admin (quyền `promotions`) | **Chương trình khuyến mãi** (kiểu TGDĐ / CellphoneS): loại ưu đãi Giảm giá (% có trần / số tiền) · Quà tặng · Trả góp 0% · Thu cũ đổi mới · Khác; thời gian từ ngày – đến hết ngày (trống = không thời hạn); áp dụng theo loại hàng / tình trạng / thương hiệu hoặc chọn từng sản phẩm; chi nhánh; banner, thể lệ (Markdown), hiện web, nổi bật. Tab Đang diễn ra / Sắp diễn ra / Đã kết thúc / Tạm dừng |
+| `/api/public/*` | Công khai (không đăng nhập) | API chỉ đọc cho web bán hàng (repo FE riêng `phone-store-shop`): `products`, `products/:slug`, `filters`, `branches`, `repair-prices`, `posts`, `posts/:slug`, `promotions`, `promotions/:slug`. Tài liệu: **`docs/public-api.md`**. **Không đổi tên trường / shape** — FE đang dùng |
 | `/brands` | Admin | Danh mục thương hiệu để chọn khi nhập phụ kiện / Android |
 | `/repair-prices` | Xem: tất cả · Sửa: admin | Bảng giá sửa chữa theo dịch vụ (thay pin, thay màn…) × dòng máy |
 | `/warranty` | Tất cả | Tra cứu bảo hành theo SĐT / tên khách / tên sản phẩm |
@@ -110,10 +111,18 @@ Giao diện (`src/components/AppShell.tsx`, danh sách menu dùng chung ở `src
 - Repo FE riêng `phone-store-shop` **chỉ gọi API** (env `ADMIN_API_URL`), không đọc DB. Đổi tên trường `PublicProduct` hoặc shape `{ items: [...] }` của `branches` / `repair-prices` thì phải báo bên đó. FE không có đặt hàng / thanh toán (chỉ nút liên hệ Zalo / gọi).
 - Tin tức: nội dung lưu Markdown, chuyển HTML bằng `src/lib/markdown.ts` (marked) — **chặn HTML viết tay và link không an toàn** vì FE chèn `contentHtml` trực tiếp. Bài hẹn giờ: cache chứa mọi bài PUBLISHED, lọc `publishedAt <= now` lúc gọi API nên tự hiện đúng giờ. Cache tag `posts`.
 
+**Chương trình khuyến mãi (`Promotion`)** — logic thuần ở `src/lib/promotion-labels.ts` (dùng được ở client), loader cache tag `promotions` ở `src/lib/promotions.ts`.
+- Trạng thái suy ra từ `active` + `startDate` / `endDate` so với `todayVN()` (`promotionStatus`) — lọc lúc dùng, không lọc trong cache, để tự bắt đầu / kết thúc đúng ngày.
+- Phạm vi (`matchesPromotion`): có `productIds` thì chỉ các sản phẩm đó; không thì `categories` ∧ `conditions` ∧ `brandIds` (mảng trống = không giới hạn). `branchIds` trống = mọi chi nhánh.
+- Chỉ loại `DISCOUNT` đổi giá: trừ trên giá bán tại quầy (`sellingPrice`) / `finalPrice` web, giảm % làm tròn 1.000 đ, có trần `maxDiscount`; nhiều chương trình thì lấy **mức giảm cao nhất, không cộng dồn** (`promotionsFor`).
+- Trang Bán hàng: `getSaleSuggestions(branchId)` trả giá đã giảm + `promo` (tên ưu đãi), form hiện "Khuyến mãi: …"; trang `/day` hôm nay có thẻ "Khuyến mãi đang chạy". Giá vẫn là số nhân viên nhập — không ép.
+- Web: chỉ chương trình `showOnWeb`; giảm giá riêng chi nhánh **không** trừ vào giá web, chỉ hiện trong `product.promotions`. `getPublicProducts()` ghép sản phẩm (cache `prices`) + khuyến mãi (cache `promotions`) lúc gọi.
+
 **Chi nhánh**
 - Chi nhánh làm việc của phiên lưu trong cookie `branchId`, được chọn lúc đăng nhập. **Mọi ca/giao dịch/checklist ghi vào chi nhánh này** — server luôn lấy qua `getCurrentBranch()`, không tin `branchId` gửi từ form.
 - `User.branches` (nhiều–nhiều): chi nhánh nhân viên được phép làm. **Danh sách rỗng = làm được mọi chi nhánh.** Admin luôn được vào mọi chi nhánh.
 - Chọn chi nhánh không được phân công lúc đăng nhập → báo lỗi, **không** tự chuyển sang chi nhánh khác.
+- **Thông tin cửa hàng trên web** (sửa ở `/branches`, mục "Hiển thị trên web bán hàng"): địa chỉ, hotline, Zalo (số hoặc link), Facebook, TikTok, link Google Maps, giờ mở cửa, hiện / ẩn, thứ tự. API `/api/public/branches` (`getWebBranches`) trả cửa hàng đang hoạt động + bật hiện, theo thứ tự; cửa hàng đầu tiên = hotline / Zalo chính của web. Link Maps có toạ độ (`@lat,lng`) thì bản đồ nhúng đúng chỗ, không thì tìm theo địa chỉ.
 - Chi nhánh không bị xoá, chỉ ẩn (`active = false`) để giữ lịch sử. Báo cáo dùng `getBranches()` (gồm cả chi nhánh đã ẩn), còn form chọn dùng `getActiveBranches()`.
 
 **Checklist** — `ChecklistTask` do admin tạo (`branchId` null = mọi chi nhánh). `ChecklistCheck` duy nhất theo (task, ngày, chi nhánh): mỗi việc tính một lần cho cả chi nhánh trong ngày, ghi lại ai tick và lúc nào. Nhân viên chỉ bỏ tick được việc do chính mình tick. Form chốt ca cảnh báo nếu checklist còn việc chưa xong. Việc đã ẩn vẫn hiện ở những ngày từng được tick.
@@ -124,7 +133,7 @@ Giao diện (`src/components/AppShell.tsx`, danh sách menu dùng chung ở `src
 - **Chỉ nhân viên vào ca.** Admin không có ca; admin xem và quản lý ca của nhân viên (thêm giao dịch vào ca đang mở, mở lại ca đã chốt).
 - **Chỉ admin được xoá giao dịch** (`deleteTransaction`); nhân viên nhập sai thì báo admin.
 - Nhân viên chỉ thao tác trên **ngày hôm nay**, chỉ sửa **ca của mình**.
-- **Quyền riêng từng nhân viên** (`User.permissions`, danh sách khoá trong `src/lib/permissions.ts`, admin sửa ở `/permissions`). Admin bỏ qua, luôn toàn quyền. Mỗi quyền = một mục menu: `sell`, `products`, `repair-prices`, `warranty`, `timesheet` (mặc định bật — giống nhân viên trước khi có phân quyền) và `dashboard`, `history`, `posts`, `checklist`, `brands` (mặc định tắt). Thiếu quyền → menu ẩn, trang chuyển về trang chủ, server action trả lỗi.
+- **Quyền riêng từng nhân viên** (`User.permissions`, danh sách khoá trong `src/lib/permissions.ts`, admin sửa ở `/permissions`). Admin bỏ qua, luôn toàn quyền. Mỗi quyền = một mục menu: `sell`, `products`, `repair-prices`, `warranty`, `timesheet` (mặc định bật — giống nhân viên trước khi có phân quyền) và `dashboard`, `history`, `posts`, `promotions`, `checklist`, `brands` (mặc định tắt). Thiếu quyền → menu ẩn, trang chuyển về trang chủ, server action trả lỗi.
   - Trang: `await requirePermission("key")`; server action: `can(me, "key")`; menu: trường `permission` trong `src/lib/nav.ts` (không đặt = chỉ admin).
   - `history` cho phép xem `/day/<ngày khác>` (chỉ xem); vào ca / giao dịch / tick checklist cần `sell`.
   - Luôn chỉ admin: `/users`, `/permissions`, `/branches`, sửa bảng giá & giá sửa chữa, xem giá nhập, xoá giao dịch, mở lại ca, xoá phiếu nhập — tránh nhân viên tự nâng quyền / thấy giá nhập.

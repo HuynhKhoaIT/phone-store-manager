@@ -73,11 +73,30 @@ Dữ liệu dựng bộ lọc (chỉ tính hàng còn bán):
 
 ### `GET /branches`
 
-Chi nhánh đang hoạt động, sắp theo `id`:
+Cửa hàng hiện trên web: chi nhánh đang hoạt động **và** bật "Hiện trên web", sắp theo "Thứ tự trên web" (admin sửa ở trang **Chi nhánh**). **Cửa hàng đầu tiên = hotline / Zalo chính** của web.
 
 ```json
-{ "items": [{ "id": 1, "name": "Chi nhánh 1" }] }
+{
+  "items": [
+    {
+      "id": 1,
+      "name": "Cơ sở Tân Hy",
+      "address": "Thôn Tân Hy, Xã Vạn Tường, Quảng Ngãi",
+      "phone": "0869 950 090",
+      "zaloUrl": "https://zalo.me/0869950090",
+      "facebookUrl": "https://facebook.com/...",
+      "tiktokUrl": null,
+      "openingHours": "7:30 – 21:30 hằng ngày",
+      "mapUrl": "https://www.google.com/maps/...",
+      "mapEmbedUrl": "https://maps.google.com/maps?q=15.12%2C108.80&z=16&output=embed"
+    }
+  ]
+}
 ```
+
+- Các trường ngoài `id`, `name` có thể `null` (admin chưa nhập).
+- `zaloUrl`: link admin dán, hoặc `zalo.me/<số>` từ số Zalo / hotline (đã đổi `+84` về `0`).
+- `mapUrl`: link "Chỉ đường" (link Google Maps admin dán, không có thì tìm theo địa chỉ). `mapEmbedUrl`: dùng cho `<iframe>` bản đồ — theo toạ độ trong link Google Maps nếu có, không thì theo địa chỉ.
 
 > **Giá liên hệ:** sản phẩm admin bật "Web hiện Liên hệ thay giá" (`Product.priceOnRequest`) trả `price = finalPrice = 0`, `salePrice = null`, `discountPercent = 0` — giá nội bộ không lộ ra. FE hiện **"Liên hệ"**, không tính vào "Từ ...", xếp cuối khi sắp theo giá. `priceRange` của `/filters` bỏ qua giá 0.
 
@@ -138,6 +157,47 @@ type PublicPost = PublicPostSummary & {
 
 `contentHtml` không chứa HTML viết tay (bị chuyển thành chữ), chỉ có link `http(s)`, `mailto:`, `tel:` hoặc đường dẫn tương đối; link ngoài có `target="_blank" rel="noopener noreferrer"`. FE tự tạo CSS cho nội dung (thẻ `h2`, `h3`, `p`, `ul`, `ol`, `blockquote`, `img`, `a`, `table`, `code`).
 
+### `GET /promotions`
+
+Chương trình khuyến mãi **đang diễn ra** (admin bật "Hiện trên web"), sắp theo: nổi bật → thứ tự → mới nhất. `?includeUpcoming=1` gồm cả chương trình **sắp diễn ra** (`status: "UPCOMING"`).
+
+```json
+{ "items": [ /* PublicPromotionSummary */ ] }
+```
+
+### `GET /promotions/:slug`
+
+Chi tiết + thể lệ + sản phẩm còn hàng được áp dụng (chỉ khi đang diễn ra). Chương trình **đã kết thúc** vẫn trả về (`status: "ENDED"`, `products: []`) để link cũ không lỗi — FE nên hiện "Đã kết thúc". Không có / tạm dừng / tắt hiện web → `404`.
+
+```json
+{ "promotion": { /* PublicPromotion */ }, "products": [ /* PublicProduct */ ] }
+```
+
+```ts
+type PublicPromotionSummary = {
+  id: number;
+  slug: string;
+  title: string;              // "Sale 10/10"
+  type: "DISCOUNT" | "GIFT" | "INSTALLMENT" | "TRADE_IN" | "OTHER";
+  typeLabel: string;          // "Giảm giá" | "Quà tặng" | "Trả góp 0%" | "Thu cũ đổi mới" | "Ưu đãi khác"
+  summary: string;            // "Giảm 10% (tối đa 500.000 đ)", "Tặng ốp lưng + cường lực"
+  bannerUrl: string | null;
+  startDate: string;          // YYYY-MM-DD
+  endDate: string | null;     // YYYY-MM-DD (hết ngày này, giờ VN); null = không thời hạn
+  status: "RUNNING" | "UPCOMING" | "ENDED";
+  featured: boolean;          // nổi bật (banner trang chủ)
+  branches: string[];         // chỉ áp dụng tại các chi nhánh này; [] = mọi chi nhánh
+  productCount: number;       // số sản phẩm còn hàng được áp dụng
+};
+
+type PublicPromotion = PublicPromotionSummary & {
+  content: string;            // thể lệ — Markdown gốc
+  contentHtml: string;        // HTML đã làm sạch (như bài viết)
+};
+```
+
+**Giá sản phẩm có khuyến mãi:** chương trình loại `DISCOUNT` đang chạy, áp dụng **mọi chi nhánh**, được trừ thẳng vào `salePrice` / `finalPrice` / `discountPercent` của `PublicProduct` (lấy mức giảm cao nhất, không cộng dồn; giảm % làm tròn 1.000 đ). Chương trình riêng chi nhánh và các loại khác chỉ nằm trong `product.promotions` để FE hiện khung "Khuyến mãi". Giá "Liên hệ" (`finalPrice = 0`) không bị trừ. Chương trình tự bắt đầu / kết thúc theo ngày (giờ Việt Nam).
+
 ## Kiểu `PublicProduct`
 
 ```ts
@@ -158,7 +218,7 @@ type PublicProduct = {
   batteryHealth: number | null; // % pin (iPhone)
   warrantyMonths: number;
   price: number;             // giá niêm yết (đồng)
-  salePrice: number | null;  // giá khuyến mãi nếu có
+  salePrice: number | null;  // giá khuyến mãi nếu có (đã trừ chương trình khuyến mãi giảm giá)
   finalPrice: number;        // giá thực bán = salePrice ?? price
   discountPercent: number;   // 0 nếu không giảm
   status: "AVAILABLE" | "SOLD";
@@ -168,6 +228,16 @@ type PublicProduct = {
   thumbnail: string | null;  // = images[0]
   description: string | null;
   imeiMasked: string | null; // "3567•••••••2345" (điện thoại có IMEI)
+  promotions: {              // chương trình đang chạy áp dụng cho sản phẩm ([] nếu không có)
+    slug: string;            // link tới /promotions/:slug
+    title: string;
+    type: string;            // như PublicPromotionSummary.type
+    typeLabel: string;
+    summary: string;
+    discountAmount: number;  // số tiền đã trừ vào finalPrice (0 = chỉ là ưu đãi kèm)
+    endDate: string | null;
+    branches: string[];      // [] = mọi chi nhánh
+  }[];
   updatedAt: string;         // ISO 8601
 };
 ```
@@ -186,3 +256,5 @@ const { product, related } = await fetch(`${API}/products/iphone-13-pro-max-6-12
 **Bài viết:** Trang quản lý → **Quản lý → Tin tức** → **Viết bài**. Viết nội dung bằng Markdown (có tab Xem trước), chọn chuyên mục, ảnh bìa, tóm tắt; Trạng thái **Đăng** + ngày đăng (ngày tương lai = hẹn giờ). Bài **Nháp** không bao giờ ra API.
 
 **Sản phẩm:** Trang quản lý → **Hàng hoá** → Thêm / Sửa sản phẩm → bật **"Hiển thị trên web"**, rồi điền: giá khuyến mãi, sản phẩm nổi bật, thứ tự hiển thị, link ảnh (mỗi dòng 1 link), mô tả, đường dẫn (để trống sẽ tự tạo từ tên). Sản phẩm đang hiện trên web có nhãn **Web** trong danh sách.
+
+**Khuyến mãi:** Trang quản lý → **Quản lý → Khuyến mãi** → **Tạo chương trình**: loại ưu đãi (giảm % / số tiền, quà tặng, trả góp 0%, thu cũ đổi mới…), thời gian, áp dụng cho loại hàng / thương hiệu / tình trạng hoặc từng sản phẩm, chi nhánh, banner, thể lệ. Giảm giá tự áp vào giá gợi ý ở trang Bán hàng và giá trên web.

@@ -7,6 +7,7 @@ export const TAGS = {
   users: "users",
   prices: "prices",
   posts: "posts",
+  promotions: "promotions",
 } as const;
 
 /**

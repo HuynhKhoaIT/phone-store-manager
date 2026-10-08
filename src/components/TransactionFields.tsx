@@ -16,6 +16,10 @@ export type PriceSuggestion = {
   quantity?: number;
   /** Phụ kiện — chọn làm quà tặng kèm được */
   giftable?: boolean;
+  /** Giá trước khuyến mãi (khi `price` đã trừ chương trình giảm giá) */
+  listPrice?: number;
+  /** Ưu đãi đang áp dụng, vd "Sale 10/10: Giảm 10% · Tặng ốp: Tặng ốp lưng" */
+  promo?: string;
 };
 
 export function TransactionFields({
@@ -49,6 +53,7 @@ export function TransactionFields({
   const receivesMoney = !installment || Number(downPayment || 0) > 0;
   const suggestions = kind === "REPAIR" ? repairSuggestions : saleSuggestions;
   const accountListId = `bank-accounts-${shiftId}`;
+  const selectedPromo = productId ? saleSuggestions.find((s) => String(s.productId) === productId && s.promo) : undefined;
 
   function selectSuggestion(match: PriceSuggestion) {
     setProductName(match.label);
@@ -108,6 +113,12 @@ export function TransactionFields({
           ariaLabel={kind === "REPAIR" ? "Nội dung sửa chữa" : "Tên sản phẩm"}
           placeholder={kind === "REPAIR" ? "Gõ để tìm trong bảng giá sửa chữa..." : "Gõ tên, IMEI hoặc mã để tìm..."}
         />
+        {kind === "SALE" && selectedPromo && (
+          <small className="text-red-600">
+            Khuyến mãi: {selectedPromo.promo}
+            {selectedPromo.listPrice != null && ` (giá gốc ${selectedPromo.listPrice.toLocaleString("vi-VN")} đ)`}
+          </small>
+        )}
         {kind === "SALE" && productName && !productId && (
           <small className="text-amber-700">Không chọn từ danh sách hàng hoá — sẽ lưu theo tên đã gõ.</small>
         )}
@@ -241,7 +252,8 @@ function PaymentSegmented({
 
 const suggestionLabel = (s: PriceSuggestion) => s.label;
 const giftMeta = (s: PriceSuggestion) => (s.quantity != null ? `Còn ${s.quantity}` : "");
-const suggestionMeta = (s: PriceSuggestion) => (s.price > 0 ? `${s.price.toLocaleString("vi-VN")} đ` : "Liên hệ");
+const suggestionMeta = (s: PriceSuggestion) =>
+  `${s.price > 0 ? `${s.price.toLocaleString("vi-VN")} đ` : "Liên hệ"}${s.promo ? " · KM" : ""}`;
 
 /**
  * Quà tặng kèm khi bán (sạc, tai nghe, ốp lưng, cường lực...): chọn phụ kiện của cửa hàng + số lượng.

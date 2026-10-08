@@ -1,4 +1,4 @@
-import { ChevronLeft, ChevronRight, Clock } from "lucide-react";
+import { BadgePercent, ChevronLeft, ChevronRight, Clock } from "lucide-react";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { prisma } from "@/lib/db";
@@ -9,7 +9,9 @@ import { getRecentBankAccounts, getSaleSuggestions } from "@/lib/prices";
 import { summarize } from "@/lib/summary";
 import { profitOf } from "@/lib/profit";
 import { getDayChecklist } from "@/lib/checklist";
-import { addDays, formatDateLong, formatVND, isValidDate, nowTimeVN, todayVN } from "@/lib/format";
+import { getRunningPromotions } from "@/lib/promotions";
+import { PROMOTION_TYPE_BADGE, PROMOTION_TYPE_LABEL, discountText } from "@/lib/promotion-labels";
+import { addDays, formatDate, formatDateLong, formatVND, isValidDate, nowTimeVN, todayVN } from "@/lib/format";
 import { openShift } from "../../actions";
 import { ActionForm } from "@/components/ActionForm";
 import { MoneyInput } from "@/components/MoneyInput";
@@ -34,7 +36,7 @@ export default async function DayPage({ params }: { params: Promise<{ date: stri
   const branch = await getCurrentBranch();
   if (!branch) redirect("/choose-branch");
 
-  const [shifts, bankAccounts, { saleSuggestions, repairSuggestions, giftOptions }, checklist] = await Promise.all([
+  const [shifts, bankAccounts, { saleSuggestions, repairSuggestions, giftOptions }, checklist, promotions] = await Promise.all([
     prisma.shift.findMany({
       where: { date, branchId: branch.id },
       include: {
@@ -50,6 +52,8 @@ export default async function DayPage({ params }: { params: Promise<{ date: stri
     getRecentBankAccounts(),
     getSaleSuggestions(branch.id),
     getDayChecklist(date, branch.id),
+    // Chỉ hôm nay: chương trình đang chạy ở chi nhánh để nhân viên báo khách
+    date === today ? getRunningPromotions(branch.id) : [],
   ]);
   // Checklist nằm ở trang Việc cần làm; ở đây chỉ đếm việc chưa xong để cảnh báo khi chốt ca
   const checklistLeft = checklist.filter((c) => !c.check).length;
@@ -139,6 +143,25 @@ export default async function DayPage({ params }: { params: Promise<{ date: stri
         <Stat label="Tiền mặt (TM)" value={formatVND(day.cash)} />
         <Stat label="Chuyển khoản (CK)" value={formatVND(day.transfer)} />
       </div>
+
+      {promotions.length > 0 && (
+        <div className="card space-y-2">
+          <p className="flex items-center gap-1.5 text-sm font-semibold">
+            <BadgePercent size={16} className="text-red-500" aria-hidden /> Khuyến mãi đang chạy
+          </p>
+          <ul className="divide-y divide-slate-100 text-sm">
+            {promotions.map((p) => (
+              <li key={p.id} className="flex flex-wrap items-center gap-x-2 gap-y-1 py-1.5">
+                <span className={`badge ${PROMOTION_TYPE_BADGE[p.type] ?? ""}`}>{PROMOTION_TYPE_LABEL[p.type] ?? p.type}</span>
+                <span className="font-medium">{p.title}</span>
+                <span className="text-slate-600">— {p.type === "DISCOUNT" ? discountText(p) : p.summary}</span>
+                {p.endDate && <span className="text-xs text-slate-400">đến {formatDate(p.endDate)}</span>}
+              </li>
+            ))}
+          </ul>
+          <p className="text-xs text-slate-500">Giá gợi ý khi chọn sản phẩm đã trừ khuyến mãi giảm giá.</p>
+        </div>
+      )}
 
       {canOpenShift && !hadShift && (
         <div className="card flex flex-col items-center gap-3 py-8 text-center">

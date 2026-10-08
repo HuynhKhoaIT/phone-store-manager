@@ -193,13 +193,33 @@ export async function saveBranch(fd: FormData): Promise<ActionResult> {
   if (!name) return { error: "Vui lòng nhập tên chi nhánh." };
   if (openedAt && !isValidDate(openedAt)) return { error: "Ngày bắt đầu tính không hợp lệ." };
 
+  // Thông tin hiện trên web bán hàng (/api/public/branches)
+  const web = {
+    address: optional(fd, "address"),
+    phone: optional(fd, "phone"),
+    zalo: optional(fd, "zalo"),
+    facebookUrl: optional(fd, "facebookUrl"),
+    tiktokUrl: optional(fd, "tiktokUrl"),
+    mapUrl: optional(fd, "mapUrl"),
+    openingHours: optional(fd, "openingHours"),
+    showOnWeb: str(fd, "showOnWeb") === "on",
+    webSortOrder: Number(str(fd, "webSortOrder") || 0),
+  };
+  if (web.phone && !PHONE_RE.test(web.phone)) return { error: "Số điện thoại không hợp lệ." };
+  // Zalo: số điện thoại hoặc link
+  if (web.zalo && !PHONE_RE.test(web.zalo) && !/^https?:\/\//i.test(web.zalo))
+    return { error: "Zalo phải là số điện thoại hoặc link (https://zalo.me/...)." };
+  for (const [label, url] of [["Facebook", web.facebookUrl], ["TikTok", web.tiktokUrl], ["Google Maps", web.mapUrl]] as const)
+    if (url && !/^https?:\/\//i.test(url)) return { error: `Link ${label} phải bắt đầu bằng http:// hoặc https://` };
+  if (!Number.isInteger(web.webSortOrder)) return { error: "Thứ tự hiển thị phải là số nguyên." };
+
   const dup = await prisma.branch.findUnique({ where: { name } });
   if (dup && dup.id !== id) return { error: "Tên chi nhánh đã tồn tại." };
   if (id && !active && (await prisma.branch.count({ where: { active: true, id: { not: id } } })) === 0)
     return { error: "Phải còn ít nhất 1 chi nhánh đang hoạt động." };
 
-  if (id) await prisma.branch.update({ where: { id }, data: { name, active, openedAt } });
-  else await prisma.branch.create({ data: { name, openedAt } });
+  if (id) await prisma.branch.update({ where: { id }, data: { name, active, openedAt, ...web } });
+  else await prisma.branch.create({ data: { name, openedAt, ...web } });
   revalidateTag(TAGS.branches);
   revalidatePath("/", "layout");
   return {};
@@ -261,12 +281,16 @@ export async function addTransaction(fd: FormData): Promise<ActionResult> {
   const found = await getEditableShift(me, Number(str(fd, "shiftId")));
   if ("error" in found) return { error: found.error };
 
-  const kind = str(fd, "kind") === "REPAIR" ? "REPAIR" : "SALE";
+  const rawKind = str(fd, "kind");
+  const kind = rawKind === "REPAIR" || rawKind === "SIM" ? rawKind : "SALE";
   const paymentMethod = str(fd, "paymentMethod") === "TRANSFER" ? "TRANSFER" : "CASH";
-  const productName = str(fd, "productName");
-  const price = money(fd, "price");
+  // Bán SIM: chọn số + đấu nối làm trên app nhà mạng, ở đây ghi nhận số thuê bao + giá SIM + giá gói cước
+  const sim = kind === "SIM" ? simFields(fd) : null;
+  if (sim && "error" in sim) return { error: sim.error };
+  const productName = sim ? `SIM ${sim.simCarrier} ${sim.simNumber}` : str(fd, "productName");
+  const price = sim ? sim.price : money(fd, "price");
   const bankAccount = paymentMethod === "TRANSFER" ? optional(fd, "bankAccount") : null;
-  const warrantyMonths = warranty(fd);
+  const warrantyMonths = sim ? 0 : warranty(fd);
   const customerName = optional(fd, "customerName");
   const customerPhone = optional(fd, "customerPhone");
   // Bán trả góp qua công ty tài chính: khách trả trước (TM/CK), phần còn lại công ty tài chính trả sau
@@ -276,7 +300,8 @@ export async function addTransaction(fd: FormData): Promise<ActionResult> {
 
   if (!productName)
     return { error: kind === "REPAIR" ? "Vui lòng nhập nội dung sửa chữa." : "Vui lòng nhập tên sản phẩm." };
-  if (!Number.isFinite(price) || price <= 0) return { error: "Vui lòng nhập giá tiền." };
+  if (!Number.isFinite(price) || price <= 0)
+    return { error: sim ? "Giá SIM + gói cước phải lớn hơn 0." : "Vui lòng nhập giá tiền." };
   if (installment) {
     if (!financeCompany) return { error: "Vui lòng nhập công ty tài chính." };
     if (downPayment == null || !Number.isFinite(downPayment) || downPayment < 0)
@@ -336,6 +361,10 @@ export async function addTransaction(fd: FormData): Promise<ActionResult> {
         financeCompany,
         financeContract: installment ? optional(fd, "financeContract") : null,
         downPayment,
+        simCarrier: sim?.simCarrier ?? null,
+        simNumber: sim?.simNumber ?? null,
+        simSerial: sim?.simSerial ?? null,
+        simPlanPrice: sim?.simPlanPrice ?? null,
         gifts: {
           create: gifts.map((g) => ({
             productId: g.product.id,
@@ -366,6 +395,23 @@ export async function addTransaction(fd: FormData): Promise<ActionResult> {
   if (installment) revalidatePath("/installments");
   revalidatePath(`/day/${found.shift.date}`);
   return {};
+}
+
+const SIM_NUMBER_RE = /^0\d{9}$/;
+
+/** Đọc + kiểm tra phần bán SIM của form giao dịch. price = giá SIM + giá gói cước */
+function simFields(fd: FormData) {
+  const simCarrier = str(fd, "simCarrier");
+  const simNumber = str(fd, "simNumber").replace(/[ .-]/g, "");
+  const simSerial = str(fd, "simSerial").replace(/\s/g, "") || null;
+  const simPrice = money(fd, "simPrice");
+  const simPlanPrice = str(fd, "simPlanPrice") ? money(fd, "simPlanPrice") : 0;
+  if (!simCarrier) return { error: "Vui lòng chọn nhà mạng." };
+  if (!SIM_NUMBER_RE.test(simNumber)) return { error: "Số thuê bao phải gồm 10 chữ số, bắt đầu bằng 0." };
+  if (simSerial && !/^\d{6,20}$/.test(simSerial)) return { error: "Serial SIM chỉ gồm chữ số." };
+  if (!Number.isFinite(simPrice) || simPrice < 0) return { error: "Vui lòng nhập giá SIM (không thu thì nhập 0)." };
+  if (!Number.isFinite(simPlanPrice) || simPlanPrice < 0) return { error: "Giá gói cước không hợp lệ." };
+  return { simCarrier, simNumber, simSerial, simPlanPrice, price: simPrice + simPlanPrice };
 }
 
 export async function deleteTransaction(id: number): Promise<ActionResult> {
@@ -969,6 +1015,120 @@ export async function deletePost(id: number): Promise<ActionResult> {
   await prisma.post.delete({ where: { id } });
   revalidateTag(TAGS.posts);
   revalidatePath("/posts");
+  return {};
+}
+
+/* ---------------- Chương trình khuyến mãi ---------------- */
+
+const PROMOTION_TYPES = ["DISCOUNT", "GIFT", "INSTALLMENT", "TRADE_IN", "OTHER"];
+
+export async function savePromotion(fd: FormData): Promise<ActionResult> {
+  const me = await getSessionUser();
+  if (!me || !can(me, "promotions")) return NO_PERMISSION;
+
+  const id = Number(str(fd, "id")) || null;
+  const title = str(fd, "title");
+  const type = str(fd, "type");
+  const isDiscount = type === "DISCOUNT";
+  const discountType = isDiscount ? (str(fd, "discountType") === "PERCENT" ? "PERCENT" : "AMOUNT") : null;
+  const discountValue = !isDiscount
+    ? null
+    : discountType === "PERCENT"
+      ? Number(str(fd, "discountPercent"))
+      : money(fd, "discountAmount");
+  const maxDiscount = discountType === "PERCENT" && str(fd, "maxDiscount") ? money(fd, "maxDiscount") : null;
+  const startDate = str(fd, "startDate");
+  const endDate = optional(fd, "endDate");
+  const bannerUrl = optional(fd, "bannerUrl");
+  const ints = (key: string) => [...new Set(fd.getAll(key).map((v) => Number(v)).filter((n) => Number.isInteger(n) && n > 0))];
+  const byProduct = str(fd, "scope") === "PRODUCTS";
+  const productIds = byProduct ? ints("productIds") : [];
+  const categories = byProduct ? [] : fd.getAll("categories").map(String).filter((c) => CATEGORIES.includes(c));
+  const brandIds = byProduct ? [] : ints("brandIds");
+  const conditions = byProduct ? [] : fd.getAll("conditions").map(String).filter((c) => c === "NEW" || c === "USED");
+  const branchIds = ints("branchIds");
+
+  if (!title) return { error: "Vui lòng nhập tên chương trình." };
+  if (title.length > 200) return { error: "Tên chương trình tối đa 200 ký tự." };
+  if (!PROMOTION_TYPES.includes(type)) return { error: "Vui lòng chọn loại ưu đãi." };
+  if (discountType === "PERCENT" && (!Number.isInteger(discountValue) || discountValue! < 1 || discountValue! > 90))
+    return { error: "Mức giảm phải từ 1% đến 90%." };
+  if (discountType === "AMOUNT" && (!Number.isFinite(discountValue) || discountValue! <= 0))
+    return { error: "Vui lòng nhập số tiền giảm." };
+  if (maxDiscount != null && (!Number.isFinite(maxDiscount) || maxDiscount <= 0))
+    return { error: "Giảm tối đa không hợp lệ." };
+  // Giảm giá thì tự tạo mô tả nếu để trống; loại khác bắt buộc ghi ưu đãi là gì
+  const summary =
+    str(fd, "summary") ||
+    (isDiscount ? `Giảm ${discountType === "PERCENT" ? `${discountValue}%` : `${discountValue!.toLocaleString("vi-VN")} đ`}` : "");
+  if (!summary) return { error: "Vui lòng nhập nội dung ưu đãi (vd: Tặng ốp lưng + cường lực)." };
+  if (summary.length > 200) return { error: "Nội dung ưu đãi tối đa 200 ký tự." };
+  if (!isValidDate(startDate)) return { error: "Vui lòng chọn ngày bắt đầu." };
+  if (endDate && !isValidDate(endDate)) return { error: "Ngày kết thúc không hợp lệ." };
+  if (endDate && endDate < startDate) return { error: "Ngày kết thúc phải sau ngày bắt đầu." };
+  if (byProduct && !productIds.length) return { error: "Vui lòng chọn ít nhất một sản phẩm áp dụng." };
+  if (bannerUrl && (!/^https?:\/\/\S+$/i.test(bannerUrl) || bannerUrl.length > 500))
+    return { error: "Link ảnh banner phải bắt đầu bằng http:// hoặc https://" };
+
+  const existing = id ? await prisma.promotion.findUnique({ where: { id } }) : null;
+  if (id && !existing) return { error: "Không tìm thấy chương trình." };
+
+  // Slug: nhập tay hoặc tự tạo từ tên; thêm -2, -3... nếu trùng
+  const slugInput = slugify(str(fd, "slug"));
+  const base = slugInput || existing?.slug || slugify(title) || "khuyen-mai";
+  let slug = base;
+  for (let n = 2; await prisma.promotion.findFirst({ where: { slug, ...(id && { id: { not: id } }) } }); n++) {
+    if (slugInput && n === 2) return { error: `Đường dẫn "${slugInput}" đã được dùng cho chương trình khác.` };
+    slug = `${base}-${n}`;
+  }
+
+  const data = {
+    title,
+    slug,
+    type,
+    discountType,
+    discountValue,
+    maxDiscount,
+    summary,
+    content: str(fd, "content"),
+    bannerUrl,
+    startDate,
+    endDate,
+    categories,
+    brandIds,
+    conditions,
+    productIds,
+    branchIds,
+    active: str(fd, "active") !== "false",
+    showOnWeb: str(fd, "showOnWeb") === "on",
+    featured: str(fd, "featured") === "on",
+    sortOrder: Number(str(fd, "sortOrder")) || 0,
+  };
+  if (id) await prisma.promotion.update({ where: { id }, data });
+  else await prisma.promotion.create({ data: { ...data, createdBy: me.name } });
+  revalidateTag(TAGS.promotions);
+  revalidatePath("/promotions");
+  return {};
+}
+
+/** Tạm dừng / chạy lại nhanh từ danh sách */
+export async function togglePromotion(id: number): Promise<ActionResult> {
+  const me = await getSessionUser();
+  if (!me || !can(me, "promotions")) return NO_PERMISSION;
+  const p = await prisma.promotion.findUnique({ where: { id } });
+  if (!p) return { error: "Không tìm thấy chương trình." };
+  await prisma.promotion.update({ where: { id }, data: { active: !p.active } });
+  revalidateTag(TAGS.promotions);
+  revalidatePath("/promotions");
+  return {};
+}
+
+export async function deletePromotion(id: number): Promise<ActionResult> {
+  const me = await getSessionUser();
+  if (!me || !can(me, "promotions")) return NO_PERMISSION;
+  await prisma.promotion.delete({ where: { id } });
+  revalidateTag(TAGS.promotions);
+  revalidatePath("/promotions");
   return {};
 }
 

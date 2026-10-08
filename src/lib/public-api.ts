@@ -5,6 +5,10 @@ import { CACHE_SECONDS, TAGS } from "./cache";
 import { CATEGORY_LABEL, CONDITION_LABEL, capacityLabel } from "./product-labels";
 import { POST_CATEGORY_LABEL } from "./post-labels";
 import { markdownToPlainText, renderMarkdown } from "./markdown";
+import { getBranches } from "./branch";
+import { todayVN } from "./format";
+import { getPromotionRows, type PromotionRow } from "./promotions";
+import { PROMOTION_TYPE_LABEL, discountText, matchesPromotion, promotionStatus, promotionsFor } from "./promotion-labels";
 
 /**
  * API công khai cho web marketing. CHỈ trả dữ liệu an toàn:
@@ -45,7 +49,25 @@ export type PublicProduct = {
   description: string | null;
   /** IMEI đã che, vd "3567•••••••2345" (chỉ điện thoại) */
   imeiMasked: string | null;
+  /** Chương trình khuyến mãi đang chạy áp dụng cho sản phẩm (giảm giá đã tính vào salePrice / finalPrice) */
+  promotions: PublicPromotionBadge[];
   updatedAt: string;
+};
+
+/** Khuyến mãi gắn trên một sản phẩm */
+export type PublicPromotionBadge = {
+  slug: string;
+  title: string;
+  type: string;
+  typeLabel: string;
+  /** Nội dung ưu đãi, vd "Giảm 10% (tối đa 500.000 đ)", "Tặng ốp lưng + cường lực" */
+  summary: string;
+  /** Số tiền được giảm trên sản phẩm này (đã trừ vào finalPrice); 0 = không trừ giá */
+  discountAmount: number;
+  /** YYYY-MM-DD (hết ngày này); null = không thời hạn */
+  endDate: string | null;
+  /** Chỉ áp dụng tại các chi nhánh này; [] = mọi chi nhánh */
+  branches: string[];
 };
 
 type Row = Awaited<ReturnType<typeof loadRows>>[number];
@@ -95,14 +117,64 @@ function toPublic(p: Row): PublicProduct {
     thumbnail: p.imageUrls[0] ?? null,
     description: p.description,
     imeiMasked: p.code && p.category !== "ACCESSORY" ? maskCode(p.code) : null,
+    promotions: [],
     updatedAt: p.updatedAt.toISOString(),
   };
 }
 
-/** Toàn bộ sản phẩm công khai (cache; xoá cache khi sửa bảng giá / bán máy — tag "prices"). */
-export const getPublicProducts = unstable_cache(async () => (await loadRows()).map(toPublic), ["public-products"], {
-  tags: [TAGS.prices], revalidate: CACHE_SECONDS,
+/** Sản phẩm công khai chưa tính khuyến mãi + brandId để khớp chương trình (cache; tag "prices"). */
+const getBaseProducts = unstable_cache(
+  async () => (await loadRows()).map((p) => ({ product: toPublic(p), brandId: p.brandId })),
+  ["public-products"],
+  { tags: [TAGS.prices], revalidate: CACHE_SECONDS },
+);
+
+/** Chương trình đang chạy, bật hiện trên web (lọc theo ngày lúc gọi API → tự bắt đầu / kết thúc đúng ngày). */
+async function getWebPromotions() {
+  const today = todayVN();
+  return (await getPromotionRows()).filter((p) => p.showOnWeb && promotionStatus(p, today) === "RUNNING");
+}
+
+const matchKey = (p: PublicProduct, brandId: number | null) => ({
+  id: p.id,
+  category: p.category,
+  brandId,
+  condition: p.condition,
 });
+
+/**
+ * Toàn bộ sản phẩm công khai, giá đã trừ khuyến mãi giảm giá (mức cao nhất, không cộng dồn). Chỉ chương trình áp dụng
+ * mọi chi nhánh mới trừ vào giá web — chương trình riêng chi nhánh chỉ hiện thông tin.
+ */
+export async function getPublicProducts(): Promise<PublicProduct[]> {
+  const [base, promos, branches] = await Promise.all([getBaseProducts(), getWebPromotions(), getBranches()]);
+  if (!promos.length) return base.map((b) => b.product);
+  const branchName = new Map(branches.map((b) => [b.id, b.name]));
+  return base.map(({ product: p, brandId }) => {
+    const key = matchKey(p, brandId);
+    const matched = promos.filter((x) => matchesPromotion(x, key));
+    if (!matched.length) return p;
+    // Giá liên hệ (finalPrice 0) thì promotionDiscount trả 0 — chỉ hiện ưu đãi
+    const { best } = promotionsFor(matched.filter((x) => !x.branchIds.length), key, p.finalPrice);
+    const finalPrice = p.finalPrice - (best?.amount ?? 0);
+    return {
+      ...p,
+      salePrice: finalPrice < p.price ? finalPrice : null,
+      finalPrice,
+      discountPercent: finalPrice < p.price ? Math.round(((p.price - finalPrice) / p.price) * 100) : 0,
+      promotions: matched.map((x) => ({
+        slug: x.slug,
+        title: x.title,
+        type: x.type,
+        typeLabel: PROMOTION_TYPE_LABEL[x.type] ?? x.type,
+        summary: x.type === "DISCOUNT" ? discountText(x) : x.summary,
+        discountAmount: x === best?.promo ? best.amount : 0,
+        endDate: x.endDate,
+        branches: x.branchIds.map((id) => branchName.get(id)).filter((n): n is string => !!n),
+      })),
+    };
+  });
+}
 
 export type ProductQuery = {
   category?: string;
@@ -287,6 +359,83 @@ export function queryPosts(all: PublicPost[], q: PostQuery) {
     pageSize,
     totalPages: Math.max(Math.ceil(items.length / pageSize), 1),
   };
+}
+
+/* ---------------- Khuyến mãi ---------------- */
+
+export type PublicPromotionSummary = {
+  id: number;
+  slug: string;
+  title: string;
+  type: string;
+  typeLabel: string;
+  summary: string;
+  bannerUrl: string | null;
+  /** YYYY-MM-DD */
+  startDate: string;
+  /** YYYY-MM-DD (hết ngày này); null = không thời hạn */
+  endDate: string | null;
+  status: "RUNNING" | "UPCOMING" | "ENDED";
+  featured: boolean;
+  /** Chỉ áp dụng tại các chi nhánh này; [] = mọi chi nhánh */
+  branches: string[];
+  /** Số sản phẩm còn hàng trên web được áp dụng */
+  productCount: number;
+};
+
+export type PublicPromotion = PublicPromotionSummary & {
+  /** Thể lệ — Markdown gốc */
+  content: string;
+  /** HTML đã làm sạch — FE chèn trực tiếp được */
+  contentHtml: string;
+};
+
+async function toPromotionSummaries(rows: PromotionRow[]) {
+  const [base, branches] = await Promise.all([getBaseProducts(), getBranches()]);
+  const branchName = new Map(branches.map((b) => [b.id, b.name]));
+  const today = todayVN();
+  const available = base.filter((b) => b.product.status === "AVAILABLE");
+  return rows.map(
+    (p): PublicPromotionSummary => ({
+      id: p.id,
+      slug: p.slug,
+      title: p.title,
+      type: p.type,
+      typeLabel: PROMOTION_TYPE_LABEL[p.type] ?? p.type,
+      summary: p.type === "DISCOUNT" ? discountText(p) : p.summary,
+      bannerUrl: p.bannerUrl,
+      startDate: p.startDate,
+      endDate: p.endDate,
+      // Hàng đã lọc active nên không có PAUSED
+      status: promotionStatus(p, today) as PublicPromotionSummary["status"],
+      featured: p.featured,
+      branches: p.branchIds.map((id) => branchName.get(id)).filter((n): n is string => !!n),
+      productCount: available.filter((b) => matchesPromotion(p, matchKey(b.product, b.brandId))).length,
+    }),
+  );
+}
+
+/** Chương trình đang chạy (+ sắp diễn ra nếu `includeUpcoming`) bật hiện trên web — thứ tự: nổi bật → thứ tự → mới nhất. */
+export async function getPublicPromotions(includeUpcoming = false) {
+  const today = todayVN();
+  const rows = (await getPromotionRows()).filter((p) => {
+    const st = promotionStatus(p, today);
+    return p.showOnWeb && (st === "RUNNING" || (includeUpcoming && st === "UPCOMING"));
+  });
+  return toPromotionSummaries(rows);
+}
+
+/** Chi tiết theo slug (kể cả đã kết thúc để link cũ không lỗi) + sản phẩm còn hàng được áp dụng (khi đang chạy). */
+export async function getPublicPromotion(slug: string) {
+  const row = (await getPromotionRows()).find((p) => p.showOnWeb && p.slug === slug);
+  if (!row) return null;
+  const [[summary], products] = await Promise.all([toPromotionSummaries([row]), getPublicProducts()]);
+  const promotion: PublicPromotion = { ...summary, content: row.content, contentHtml: renderMarkdown(row.content) };
+  const items =
+    summary.status === "RUNNING"
+      ? products.filter((p) => p.status === "AVAILABLE" && p.promotions.some((x) => x.slug === row.slug))
+      : [];
+  return { promotion, products: items };
 }
 
 /* ---------------- CORS + cache cho route handler ---------------- */

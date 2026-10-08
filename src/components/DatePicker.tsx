@@ -24,6 +24,7 @@ export function DatePicker({
   label,
   placeholder = "Chọn ngày",
   required,
+  clearable,
 }: {
   value?: string;
   name?: string;
@@ -31,6 +32,8 @@ export function DatePicker({
   label: string;
   placeholder?: string;
   required?: boolean;
+  /** Có nút "Xoá" để bỏ chọn ngày (vd ngày kết thúc để trống = không thời hạn) */
+  clearable?: boolean;
 }) {
   const [value, setValue] = useState(initial);
   const [open, setOpen] = useState(false);
@@ -144,7 +147,19 @@ export function DatePicker({
               ),
             )}
           </div>
-          <div className="mt-2 border-t border-slate-100 pt-2 text-right">
+          <div className="mt-2 flex justify-end gap-4 border-t border-slate-100 pt-2">
+            {clearable && value && (
+              <button
+                type="button"
+                onClick={() => {
+                  setValue("");
+                  setOpen(false);
+                }}
+                className="text-sm text-slate-500 hover:underline"
+              >
+                Xoá
+              </button>
+            )}
             <button type="button" onClick={() => pick(today)} className="text-sm text-[#1677ff] hover:underline">
               Hôm nay
             </button>

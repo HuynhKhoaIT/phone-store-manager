@@ -13,6 +13,17 @@ model Branch {
   active        Boolean          @default(true) // ẩn khi đóng cửa chi nhánh, vẫn giữ lịch sử
   /// Ngày bắt đầu tính hoà vốn (YYYY-MM-DD); null = từ ca làm việc đầu tiên của chi nhánh
   openedAt      String?
+  /// --- Thông tin cửa hàng trên web bán hàng (/api/public/branches) ---
+  address       String?
+  phone         String? // hotline của cơ sở
+  zalo          String? // số Zalo hoặc link (zalo.me/..., OA); trống = dùng hotline
+  facebookUrl   String?
+  tiktokUrl     String?
+  /// Link Google Maps của cửa hàng (dán từ "Chia sẻ"); có toạ độ (@lat,lng) thì bản đồ nhúng đúng vị trí, không thì tìm theo địa chỉ
+  mapUrl        String?
+  openingHours  String? // VD: 8:00 – 21:00 hằng ngày
+  showOnWeb     Boolean          @default(true)
+  webSortOrder  Int              @default(0) // số nhỏ hiện trước; cơ sở đầu tiên = hotline chính của web
   createdAt     DateTime         @default(now())
   staff         User[]           @relation("UserBranches")
   shifts        Shift[]
@@ -73,7 +84,7 @@ model Transaction {
   id              Int                  @id @default(autoincrement())
   shiftId         Int
   shift           Shift                @relation(fields: [shiftId], references: [id], onDelete: Cascade)
-  kind            String // SALE | REPAIR
+  kind            String // SALE | REPAIR | SIM
   /// Sản phẩm trong bảng giá được chọn khi bán (để đánh dấu máy có mã là đã bán, lấy giá nhập)
   productId       Int?
   product         Product?             @relation(fields: [productId], references: [id], onDelete: SetNull)
@@ -98,6 +109,12 @@ model Transaction {
   downPayment     Int? // khách trả trước
   financePaidAt   DateTime? // lúc đã thu đủ; null = còn chờ công ty tài chính trả
   financePayments InstallmentPayment[]
+  /// --- Bán SIM (kind = SIM): chọn số + đấu nối vẫn làm trên app nhà mạng, ở đây chỉ ghi nhận ---
+  /// price = giá SIM + simPlanPrice (giá gói cước)
+  simCarrier      String? // Viettel | MobiFone | Vinaphone | Vietnamobile...
+  simNumber       String? // số thuê bao (đã bỏ khoảng trắng / dấu chấm / gạch)
+  simSerial       String? // số serial in trên SIM
+  simPlanPrice    Int? // giá gói cước đăng ký kèm (0 = không đăng ký)
   createdAt       DateTime             @default(now())
 
   @@index([shiftId])
@@ -367,4 +384,38 @@ model Post {
 
   @@index([slug])
   @@index([status, publishedAt])
+}
+
+/// Chương trình khuyến mãi (kiểu Thế Giới Di Động / CellphoneS): giảm giá, quà tặng, trả góp 0%, thu cũ đổi mới...
+/// Giảm giá (DISCOUNT) tự trừ vào giá gợi ý ở quầy và giá trên web; các loại khác chỉ hiện thông tin ưu đãi.
+/// Logic áp dụng ở src/lib/promotion-labels.ts (matchesPromotion, promotionDiscount).
+model Promotion {
+  id            Int      @id @default(autoincrement())
+  title         String
+  slug          String // không trùng — kiểm tra trong code
+  type          String   @default("DISCOUNT") // DISCOUNT | GIFT | INSTALLMENT | TRADE_IN | OTHER
+  discountType  String? // chỉ DISCOUNT: PERCENT | AMOUNT
+  discountValue Int? // % (1–90) hoặc số tiền (đồng)
+  maxDiscount   Int? // giảm tối đa (đồng) khi giảm theo %
+  summary       String // dòng ngắn hiện ở sản phẩm / quầy, vd "Tặng ốp lưng + cường lực"
+  content       String   @default("") // thể lệ chương trình (Markdown)
+  bannerUrl     String?
+  startDate     String // YYYY-MM-DD (giờ Việt Nam), tính cả ngày này
+  endDate       String? // YYYY-MM-DD, tính cả ngày này; null = không thời hạn
+  /// Phạm vi: có productIds thì chỉ áp dụng cho các sản phẩm đó; không thì lọc theo loại / thương hiệu / tình trạng (trống = tất cả)
+  categories    String[] @default([]) // IPHONE | ANDROID | ACCESSORY
+  brandIds      Int[]    @default([])
+  conditions    String[] @default([]) // NEW | USED
+  productIds    Int[]    @default([])
+  branchIds     Int[]    @default([]) // chi nhánh áp dụng; trống = mọi chi nhánh
+  active        Boolean  @default(true) // false = tạm dừng
+  showOnWeb     Boolean  @default(true)
+  featured      Boolean  @default(false)
+  sortOrder     Int      @default(0) // số nhỏ hiện trước
+  createdBy     String
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([slug])
+  @@index([startDate])
 }

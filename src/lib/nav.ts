@@ -1,4 +1,5 @@
 import {
+  BadgePercent,
   Boxes,
   CalendarDays,
   ChartColumn,
@@ -57,6 +58,7 @@ export const ADMIN_LINKS: NavItem[] = [
   { href: "/customers", match: "/customers", label: "Khách hàng", description: "Lịch sử mua, bảo hành", icon: Contact, tone: "bg-orange-500" },
   { href: "/history", match: "/history", label: "Lịch sử", description: "Xem lại từng ngày", icon: CalendarDays, tone: "bg-sky-600", permission: "history" },
   { href: "/posts", match: "/posts", label: "Tin tức", description: "Bài viết cho web bán hàng", icon: Newspaper, tone: "bg-rose-500", permission: "posts" },
+  { href: "/promotions", match: "/promotions", label: "Khuyến mãi", description: "Chương trình giảm giá, quà tặng", icon: BadgePercent, tone: "bg-red-500", permission: "promotions" },
   { href: "/checklist", match: "/checklist", label: "Checklist", description: "Việc cần làm hằng ngày", icon: ListChecks, tone: "bg-green-600", permission: "checklist" },
   { href: "/users", match: "/users", label: "Nhân viên", description: "Tài khoản, chi nhánh được làm", icon: Users, tone: "bg-pink-500" },
   { href: "/permissions", match: "/permissions", label: "Phân quyền", description: "Chức năng từng nhân viên được dùng", icon: KeyRound, tone: "bg-amber-500" },

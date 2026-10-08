@@ -56,3 +56,25 @@ export const getCurrentBranch = cache(async () => {
   const id = Number((await cookies()).get(BRANCH_COOKIE)?.value);
   return allowed.find((b) => b.id === id) ?? (allowed.length === 1 ? allowed[0] : null);
 });
+
+/** Cửa hàng hiện trên web bán hàng (/api/public/branches): đang hoạt động + bật "Hiện trên web". */
+export const getWebBranches = unstable_cache(
+  () =>
+    prisma.branch.findMany({
+      where: { active: true, showOnWeb: true },
+      select: {
+        id: true,
+        name: true,
+        address: true,
+        phone: true,
+        zalo: true,
+        facebookUrl: true,
+        tiktokUrl: true,
+        mapUrl: true,
+        openingHours: true,
+      },
+      orderBy: [{ webSortOrder: "asc" }, { id: "asc" }],
+    }),
+  ["branches-web"],
+  { tags: [TAGS.branches], revalidate: CACHE_SECONDS },
+);

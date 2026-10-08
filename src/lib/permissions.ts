@@ -14,6 +14,7 @@ export const PERMISSIONS = [
   { key: "dashboard", group: "Quản lý", label: "Dashboard", description: "Doanh thu, lợi nhuận mọi chi nhánh" },
   { key: "history", group: "Quản lý", label: "Lịch sử", description: "Xem lại các ngày trước (chỉ xem)" },
   { key: "posts", group: "Quản lý", label: "Tin tức", description: "Viết, sửa, xoá bài trên web" },
+  { key: "promotions", group: "Quản lý", label: "Khuyến mãi", description: "Tạo, sửa chương trình khuyến mãi" },
   { key: "checklist", group: "Quản lý", label: "Checklist", description: "Thiết lập việc cần làm hằng ngày" },
   { key: "brands", group: "Quản lý", label: "Thương hiệu", description: "Thêm, sửa thương hiệu" },
 ] as const;
