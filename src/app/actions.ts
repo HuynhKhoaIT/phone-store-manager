@@ -7,7 +7,7 @@ import type { Prisma, Product } from "@prisma/client";
 import { TAGS } from "@/lib/cache";
 import { prisma } from "@/lib/db";
 import { BRANCH_COOKIE, getAllowedBranches, getCurrentBranch } from "@/lib/branch";
-import { isValidDate, todayVN } from "@/lib/format";
+import { isValidDate, todayVN, warrantyEnd } from "@/lib/format";
 import { slugify } from "@/lib/slug";
 import { ADMIN_TASKS, periodKey } from "@/lib/admin-tasks";
 import { can, isPermission } from "@/lib/permissions";
@@ -497,6 +497,157 @@ function topupFields(fd: FormData) {
   if (!simCarrier) return { error: "Vui lòng chọn nhà mạng." };
   if (!Number.isFinite(price) || price <= 0) return { error: "Vui lòng nhập số tiền nạp." };
   return { simCarrier, simNumber: null, simPlanPrice: null, price };
+}
+
+/**
+ * Sửa giao dịch của ca đang mở (nhân viên: ca của mình trong hôm nay; admin: mọi ca đang mở):
+ * tên, giá, thanh toán, bảo hành, khách, ghi chú.
+ * Không đổi sản phẩm gắn kèm / quà tặng / giá vốn đã chụp (muốn đổi thì xoá và nhập lại).
+ * SIM / nạp card: tên và giá do hệ thống tạo nên chỉ sửa được phần còn lại.
+ */
+export async function updateTransaction(fd: FormData): Promise<ActionResult> {
+  const me = await getSessionUser();
+  if (!me) return NOT_LOGGED_IN;
+  if (!can(me, "edit-transactions")) return NO_PERMISSION;
+  const tx = await prisma.transaction.findUnique({
+    where: { id: Number(str(fd, "id")) || 0 },
+    include: { _count: { select: { financePayments: true } } },
+  });
+  if (!tx) return { error: "Không tìm thấy giao dịch." };
+  const found = await getEditableShift(me, tx.shiftId);
+  if ("error" in found) return { error: found.error };
+
+  const fixedPrice = tx.kind === "SIM" || tx.kind === "TOPUP";
+  const productName = fixedPrice ? tx.productName : str(fd, "productName");
+  const price = fixedPrice ? tx.price : money(fd, "price");
+  const paymentMethod = str(fd, "paymentMethod") === "TRANSFER" ? "TRANSFER" : "CASH";
+  const warrantyMonths = fixedPrice ? 0 : warranty(fd);
+  const customerName = optional(fd, "customerName");
+  const customerPhone = optional(fd, "customerPhone");
+
+  if (!productName) return { error: tx.kind === "REPAIR" ? "Vui lòng nhập nội dung sửa chữa." : "Vui lòng nhập tên sản phẩm." };
+  if (!Number.isFinite(price) || price <= 0) return { error: "Vui lòng nhập giá tiền." };
+  if (tx.financeCompany) {
+    if (price !== tx.price && tx._count.financePayments > 0)
+      return { error: "Đơn trả góp đã ghi nhận tiền công ty tài chính trả nên không đổi giá được. Xoá các lần thu trước." };
+    if ((tx.downPayment ?? 0) >= price) return { error: "Giá bán phải lớn hơn tiền khách trả trước." };
+  }
+  const receivesMoney = !tx.financeCompany || (tx.downPayment ?? 0) > 0;
+  const bankAccount = paymentMethod === "TRANSFER" ? optional(fd, "bankAccount") : null;
+  if (paymentMethod === "TRANSFER" && receivesMoney && !bankAccount)
+    return { error: "Chuyển khoản thì phải ghi tài khoản nhận tiền." };
+  if (Number.isNaN(warrantyMonths)) return { error: "Bảo hành phải từ 0 đến 12 tháng." };
+  if ((warrantyMonths > 0 || tx.financeCompany) && (!customerName || !customerPhone))
+    return { error: "Bắt buộc nhập tên và số điện thoại khách hàng (bảo hành / trả góp)." };
+  if (customerPhone && !PHONE_RE.test(customerPhone)) return { error: "Số điện thoại không hợp lệ." };
+
+  await prisma.transaction.update({
+    where: { id: tx.id },
+    data: {
+      productName,
+      price,
+      // SIM / nạp card không có lãi: giá vốn luôn bằng giá thu
+      costPrice: tx.kind === "SIM" || tx.kind === "TOPUP" ? price : tx.costPrice,
+      paymentMethod,
+      bankAccount,
+      warrantyMonths,
+      customerName,
+      customerPhone: customerPhone?.replace(/[ .-]/g, "") ?? null,
+      note: optional(fd, "note"),
+    },
+  });
+  if (tx.financeCompany) revalidatePath("/installments");
+  revalidatePath("/reports", "layout");
+  revalidatePath("/dashboard");
+  revalidatePath("/warranty");
+  revalidatePath(`/day/${found.shift.date}`);
+  return {};
+}
+
+/**
+ * Đổi bảo hành: khách còn bảo hành được đưa máy khác đổi ngay. Ghi một giao dịch loại WARRANTY vào ca đang mở
+ * (nhân viên: ca của mình; admin: ca đang mở của chi nhánh hiện tại), trừ kho như bán thường.
+ * Giá = tiền khách bù thêm (đổi ngang = 0 đ; lấy máy đắt hơn thì bù chênh lệch, thu theo TM / CK như bán).
+ * Giá vốn máy đổi vẫn được chụp nên lãi lỗ ghi nhận đúng khoản lỗ bảo hành.
+ */
+export async function exchangeWarranty(fd: FormData): Promise<ActionResult> {
+  const me = await getSessionUser();
+  if (!me) return NOT_LOGGED_IN;
+  if (!can(me, "warranty-exchange")) return NO_PERMISSION;
+  const branch = await getCurrentBranch();
+  if (!branch) return { error: "Vui lòng chọn chi nhánh làm việc." };
+
+  const shift = await prisma.shift.findFirst({
+    where: { date: todayVN(), branchId: branch.id, closedAt: null, ...(isAdmin(me) ? {} : { userId: me.id }) },
+    orderBy: { id: "desc" },
+  });
+  if (!shift) return { error: "Cần đang trong ca làm việc hôm nay để ghi nhận đổi bảo hành." };
+
+  const original = await prisma.transaction.findUnique({
+    where: { id: Number(str(fd, "originalId")) || 0 },
+    include: { shift: { select: { date: true } } },
+  });
+  if (!original || original.warrantyMonths <= 0) return { error: "Không tìm thấy giao dịch có bảo hành." };
+  if (warrantyEnd(original.shift.date, original.warrantyMonths) < todayVN())
+    return { error: "Sản phẩm đã hết hạn bảo hành, không đổi miễn phí được." };
+
+  const productId = Number(str(fd, "productId")) || 0;
+  const product = productId ? await prisma.product.findUnique({ where: { id: productId } }) : null;
+  if (!product) return { error: "Vui lòng chọn máy / sản phẩm đổi từ danh sách hàng hoá." };
+  if (!product.active) return { error: "Sản phẩm này đã ngừng bán." };
+  const markSold = isSingleUnit(product);
+  if (markSold && product.soldBranchId != null) return { error: "Máy này đã được bán trước đó." };
+  const warrantyMonths = warranty(fd);
+  if (Number.isNaN(warrantyMonths)) return { error: "Bảo hành phải từ 0 đến 12 tháng." };
+  const reason = optional(fd, "reason");
+  if (!reason) return { error: "Vui lòng ghi lý do / lỗi của máy cũ." };
+  const surcharge = str(fd, "surcharge") ? money(fd, "surcharge") : 0;
+  if (!Number.isFinite(surcharge) || surcharge < 0) return { error: "Số tiền khách bù thêm không hợp lệ." };
+  const paymentMethod = surcharge > 0 && str(fd, "paymentMethod") === "TRANSFER" ? "TRANSFER" : "CASH";
+  const bankAccount = paymentMethod === "TRANSFER" ? optional(fd, "bankAccount") : null;
+  if (paymentMethod === "TRANSFER" && !bankAccount) return { error: "Chuyển khoản thì phải ghi tài khoản nhận tiền." };
+
+  const branchId = shift.branchId;
+  const borrowed = product.ownerBranchId != null && product.ownerBranchId !== branchId;
+  await prisma.$transaction(async (db) => {
+    const tx = await db.transaction.create({
+      data: {
+        shiftId: shift.id,
+        // Loại riêng: không tính là lượt bán / top sản phẩm; doanh thu = tiền bù, giá vốn máy mới vẫn tính lỗ
+        kind: "WARRANTY",
+        productId: product.id,
+        costPrice: product.costPrice,
+        productName: productLabel(product),
+        price: surcharge,
+        paymentMethod,
+        bankAccount,
+        warrantyMonths,
+        customerName: original.customerName,
+        customerPhone: original.customerPhone,
+        note: `Đổi bảo hành cho "${original.productName}" (${original.shift.date}). Lý do: ${reason}`,
+        warrantyOfId: original.id,
+      },
+    });
+    if (markSold) await db.product.update({ where: { id: product.id }, data: { soldBranchId: branchId, soldAt: new Date() } });
+    else await adjustQty(db, product.id, -1);
+    await consumeBorrowed(db, {
+      borrowerBranchId: branchId,
+      date: shift.date,
+      transactionId: tx.id,
+      createdBy: me.name,
+      product,
+      qty: 1,
+      note: "Tự ghi khi đổi bảo hành",
+    });
+  });
+  if (borrowed) revalidatePath("/products/loans");
+  revalidateTag(TAGS.prices);
+  revalidatePath("/products");
+  revalidatePath("/warranty");
+  revalidatePath("/reports", "layout");
+  revalidatePath("/dashboard");
+  revalidatePath(`/day/${shift.date}`);
+  return {};
 }
 
 export async function deleteTransaction(id: number): Promise<ActionResult> {

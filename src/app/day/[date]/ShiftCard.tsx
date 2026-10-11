@@ -1,10 +1,10 @@
 import Link from "next/link";
-import { Gift, HandCoins, LogOut, TriangleAlert } from "lucide-react";
+import { Gift, HandCoins, LogOut, Pencil, TriangleAlert } from "lucide-react";
 import type { InstallmentPayment, Shift, Transaction, TransactionGift } from "@prisma/client";
 import { summarize } from "@/lib/summary";
 import { profitOf } from "@/lib/profit";
 import { formatTimeVN, formatVND, KIND_LABEL } from "@/lib/format";
-import { addTransaction, closeShift, deleteTransaction, reopenShift } from "../../actions";
+import { addTransaction, closeShift, deleteTransaction, reopenShift, updateTransaction } from "../../actions";
 import { ActionForm } from "@/components/ActionForm";
 import { ConfirmButton } from "@/components/ConfirmButton";
 import { FormDialog } from "@/components/FormDialog";
@@ -14,6 +14,7 @@ import { TransactionFields, type PriceSuggestion } from "@/components/Transactio
 export function ShiftCard({
   shift,
   canEdit,
+  canEditTx,
   isAdmin,
   canCost,
   defaultCheckOut,
@@ -30,6 +31,8 @@ export function ShiftCard({
     })[];
   };
   canEdit: boolean;
+  /** Quyền "Sửa giao dịch" */
+  canEditTx: boolean;
   isAdmin: boolean;
   /** Xem lãi (quyền "Giá nhập & lãi") */
   canCost: boolean;
@@ -46,6 +49,7 @@ export function ShiftCard({
   const closed = !!shift.closedAt;
   // Chỉ admin được xoá giao dịch (khi ca còn mở)
   const canDelete = canEdit && isAdmin;
+  const showActions = canEdit && (canEditTx || canDelete);
   const diff = (shift.handoverCash ?? 0) - expectedCash;
   // Lãi chỉ admin xem (giá nhập là dữ liệu nội bộ) — cùng công thức Dashboard / Báo cáo
   const profit = canCost ? profitOf(shift.transactions) : null;
@@ -192,11 +196,14 @@ export function ShiftCard({
                 </p>
               )}
               {t.note && <p className="text-sm text-slate-500">{t.note}</p>}
-              {canDelete && (
-                <div className="text-right">
-                  <ConfirmButton action={deleteTransaction.bind(null, t.id)} message={`Xoá giao dịch "${t.productName}"?`}>
-                    Xoá
-                  </ConfirmButton>
+              {showActions && (
+                <div className="flex items-center justify-end gap-2">
+                  {canEditTx && <EditTransaction tx={t} bankAccounts={bankAccounts} />}
+                  {canDelete && (
+                    <ConfirmButton action={deleteTransaction.bind(null, t.id)} message={`Xoá giao dịch "${t.productName}"?`}>
+                      Xoá
+                    </ConfirmButton>
+                  )}
                 </div>
               )}
             </li>
@@ -216,7 +223,7 @@ export function ShiftCard({
                 <th>Bảo hành</th>
                 <th>Khách hàng</th>
                 <th>Ghi chú</th>
-                {canDelete && <th></th>}
+                {showActions && <th></th>}
               </tr>
             </thead>
             <tbody>
@@ -247,14 +254,19 @@ export function ShiftCard({
                     {t.customerPhone && <div className="text-xs text-slate-500">{t.customerPhone}</div>}
                   </td>
                   <td className="text-slate-600">{t.note}</td>
-                  {canDelete && (
+                  {showActions && (
                     <td>
-                      <ConfirmButton
-                        action={deleteTransaction.bind(null, t.id)}
-                        message={`Xoá giao dịch "${t.productName}"?`}
-                      >
-                        Xoá
-                      </ConfirmButton>
+                      <div className="flex items-center gap-2">
+                        {canEditTx && <EditTransaction tx={t} bankAccounts={bankAccounts} />}
+                        {canDelete && (
+                          <ConfirmButton
+                            action={deleteTransaction.bind(null, t.id)}
+                            message={`Xoá giao dịch "${t.productName}"?`}
+                          >
+                            Xoá
+                          </ConfirmButton>
+                        )}
+                      </div>
                     </td>
                   )}
                 </tr>
@@ -324,6 +336,72 @@ export function ShiftCard({
   );
 }
 
+/** Sửa giao dịch (ca đang mở; nhân viên: ca của mình hôm nay) — không đổi sản phẩm / quà tặng / giá vốn */
+function EditTransaction({ tx, bankAccounts }: { tx: Transaction; bankAccounts: string[] }) {
+  const fixed = tx.kind === "SIM" || tx.kind === "TOPUP";
+  const listId = `edit-accounts-${tx.id}`;
+  return (
+    <FormDialog title="Sửa giao dịch" triggerLabel="Sửa" triggerVariant="secondary" triggerIcon={<Pencil size={14} aria-hidden />}>
+      <ActionForm
+        action={updateTransaction}
+        submitLabel="Lưu thay đổi"
+        successMessage="Đã cập nhật giao dịch."
+        className="grid gap-3 sm:grid-cols-2"
+      >
+        <input type="hidden" name="id" value={tx.id} />
+        {fixed ? (
+          <p className="text-sm text-slate-600 sm:col-span-2">
+            {tx.productName} · {formatVND(tx.price)} (SIM / nạp card không sửa tên và giá)
+          </p>
+        ) : (
+          <>
+            <label className="field sm:col-span-2">
+              <span>Sản phẩm / Dịch vụ *</span>
+              <input name="productName" required defaultValue={tx.productName} className="input" />
+            </label>
+            <label className="field">
+              <span>Giá *</span>
+              <MoneyInput name="price" required defaultValue={tx.price} />
+            </label>
+            <label className="field">
+              <span>Bảo hành (tháng)</span>
+              <input name="warrantyMonths" type="number" min={0} max={12} defaultValue={tx.warrantyMonths} className="input" />
+            </label>
+          </>
+        )}
+        <label className="field">
+          <span>Hình thức thanh toán</span>
+          <select name="paymentMethod" defaultValue={tx.paymentMethod} className="input">
+            <option value="CASH">Tiền mặt</option>
+            <option value="TRANSFER">Chuyển khoản</option>
+          </select>
+        </label>
+        <label className="field">
+          <span>Tài khoản nhận (khi chuyển khoản)</span>
+          <input name="bankAccount" list={listId} defaultValue={tx.bankAccount ?? ""} className="input" />
+          <datalist id={listId}>
+            {bankAccounts.map((a) => (
+              <option key={a} value={a} />
+            ))}
+          </datalist>
+        </label>
+        <label className="field">
+          <span>Tên khách</span>
+          <input name="customerName" defaultValue={tx.customerName ?? ""} className="input" />
+        </label>
+        <label className="field">
+          <span>SĐT khách</span>
+          <input name="customerPhone" type="tel" inputMode="tel" defaultValue={tx.customerPhone ?? ""} className="input" />
+        </label>
+        <label className="field sm:col-span-2">
+          <span>Ghi chú</span>
+          <input name="note" defaultValue={tx.note ?? ""} className="input" />
+        </label>
+      </ActionForm>
+    </FormDialog>
+  );
+}
+
 function Line({ label, value, bold }: { label: string; value: string; bold?: boolean }) {
   return (
     <div>
@@ -341,7 +419,9 @@ function KindBadge({ kind }: { kind: string }) {
           ? "bg-orange-100 text-orange-800"
           : kind === "SIM" || kind === "TOPUP"
             ? "bg-cyan-100 text-cyan-800"
-            : "bg-blue-100 text-blue-800"
+            : kind === "WARRANTY"
+              ? "bg-amber-100 text-amber-800"
+              : "bg-blue-100 text-blue-800"
       }`}
     >
       {KIND_LABEL[kind]}

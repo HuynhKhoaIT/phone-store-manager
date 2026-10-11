@@ -17,6 +17,18 @@ export const PERMISSIONS = [
     label: "Thống kê hàng hoá",
     description: "Xem số đang bán, đã bán tháng này, giá trị hàng ở trang Hàng hoá",
   },
+  {
+    key: "edit-transactions",
+    group: "Bán hàng",
+    label: "Sửa giao dịch",
+    description: "Sửa giao dịch đã nhập trong ca đang mở của mình hôm nay (tên, giá, thanh toán, bảo hành, khách)",
+  },
+  {
+    key: "warranty-exchange",
+    group: "Bán hàng",
+    label: "Đổi bảo hành",
+    description: "Đưa máy khác đổi cho khách đang còn bảo hành (giao dịch 0 đ vào ca đang mở)",
+  },
   { key: "repair-prices", group: "Bán hàng", label: "Giá sửa chữa", description: "Xem bảng giá sửa chữa" },
   { key: "warranty", group: "Bán hàng", label: "Bảo hành", description: "Tra cứu bảo hành theo SĐT" },
   { key: "timesheet", group: "Bán hàng", label: "Chấm công", description: "Xem ngày công của mình" },
