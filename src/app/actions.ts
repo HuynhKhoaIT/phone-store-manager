@@ -541,9 +541,51 @@ export async function updateTransaction(fd: FormData): Promise<ActionResult> {
     return { error: "Bắt buộc nhập tên và số điện thoại khách hàng (bảo hành / trả góp)." };
   if (customerPhone && !PHONE_RE.test(customerPhone)) return { error: "Số điện thoại không hợp lệ." };
 
-  await prisma.transaction.update({
+  // Quà tặng (chỉ đơn bán): form gửi `giftsEdited` thì thay toàn bộ danh sách quà, hoàn / trừ kho và sổ mượn hàng
+  const editGifts = tx.kind === "SALE" && str(fd, "giftsEdited") === "1";
+  const giftIds = editGifts ? fd.getAll("giftProductId").map((v) => Number(v) || 0) : [];
+  const giftQtys = fd.getAll("giftQty").map((v) => Number(v));
+  if (giftIds.some((id) => !id)) return { error: "Quà tặng phải chọn từ danh sách phụ kiện của cửa hàng." };
+  if (giftQtys.slice(0, giftIds.length).some((q) => !Number.isInteger(q) || q <= 0 || q > 99))
+    return { error: "Số lượng quà tặng không hợp lệ." };
+  const giftProducts = giftIds.length ? await prisma.product.findMany({ where: { id: { in: giftIds } } }) : [];
+  const gifts = giftIds.map((id, i) => ({ product: giftProducts.find((g) => g.id === id)!, qty: giftQtys[i] }));
+  if (gifts.some((g) => !g.product)) return { error: "Không tìm thấy quà tặng trong hàng hoá." };
+  if (gifts.some((g) => isSingleUnit(g.product))) return { error: "Máy có IMEI không tặng kèm được." };
+  const oldGifts = editGifts ? await prisma.transactionGift.findMany({ where: { transactionId: tx.id } }) : [];
+  const giftCost = gifts.reduce((s, g) => s + (g.product.costPrice ?? 0) * g.qty, 0);
+
+  await prisma.$transaction(async (db) => {
+  if (editGifts) {
+    // Gỡ quà cũ: hoàn kho, dòng mượn hàng chưa thanh toán của quà quay về "đang mượn"
+    const oldIds = oldGifts.map((g) => g.productId).filter((id): id is number => id != null);
+    if (oldIds.length)
+      await db.branchLoan.updateMany({
+        where: { transactionId: tx.id, productId: { in: oldIds, not: tx.productId ?? undefined }, paidAt: null },
+        data: { status: "BORROWED", transactionId: null, soldDate: null },
+      });
+    for (const g of oldGifts) if (g.productId) await adjustQty(db, g.productId, g.quantity);
+    await db.transactionGift.deleteMany({ where: { transactionId: tx.id } });
+    for (const g of gifts) {
+      await db.transactionGift.create({
+        data: { transactionId: tx.id, productId: g.product.id, productName: productLabel(g.product), quantity: g.qty, costPrice: g.product.costPrice },
+      });
+      await adjustQty(db, g.product.id, -g.qty);
+      await consumeBorrowed(db, {
+        borrowerBranchId: found.shift.branchId,
+        date: found.shift.date,
+        transactionId: tx.id,
+        createdBy: me.name,
+        product: g.product,
+        qty: g.qty,
+        note: "Tự ghi khi tặng quà",
+      });
+    }
+  }
+  await db.transaction.update({
     where: { id: tx.id },
     data: {
+      ...(editGifts && { giftCost }),
       productName,
       price,
       // SIM / nạp card không có lãi: giá vốn luôn bằng giá thu
@@ -556,6 +598,11 @@ export async function updateTransaction(fd: FormData): Promise<ActionResult> {
       note: optional(fd, "note"),
     },
   });
+  });
+  if (editGifts) {
+    revalidateTag(TAGS.prices);
+    revalidatePath("/products", "layout");
+  }
   if (tx.financeCompany) revalidatePath("/installments");
   revalidatePath("/reports", "layout");
   revalidatePath("/dashboard");

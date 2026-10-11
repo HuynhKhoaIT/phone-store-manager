@@ -9,7 +9,7 @@ import { ActionForm } from "@/components/ActionForm";
 import { ConfirmButton } from "@/components/ConfirmButton";
 import { FormDialog } from "@/components/FormDialog";
 import { MoneyInput } from "@/components/MoneyInput";
-import { TransactionFields, type PriceSuggestion } from "@/components/TransactionFields";
+import { GiftList, TransactionFields, type PriceSuggestion } from "@/components/TransactionFields";
 
 export function ShiftCard({
   shift,
@@ -198,7 +198,7 @@ export function ShiftCard({
               {t.note && <p className="text-sm text-slate-500">{t.note}</p>}
               {showActions && (
                 <div className="flex items-center justify-end gap-2">
-                  {canEditTx && <EditTransaction tx={t} bankAccounts={bankAccounts} />}
+                  {canEditTx && <EditTransaction tx={t} bankAccounts={bankAccounts} giftOptions={giftOptions} />}
                   {canDelete && (
                     <ConfirmButton action={deleteTransaction.bind(null, t.id)} message={`Xoá giao dịch "${t.productName}"?`}>
                       Xoá
@@ -257,7 +257,7 @@ export function ShiftCard({
                   {showActions && (
                     <td>
                       <div className="flex items-center gap-2">
-                        {canEditTx && <EditTransaction tx={t} bankAccounts={bankAccounts} />}
+                        {canEditTx && <EditTransaction tx={t} bankAccounts={bankAccounts} giftOptions={giftOptions} />}
                         {canDelete && (
                           <ConfirmButton
                             action={deleteTransaction.bind(null, t.id)}
@@ -337,7 +337,26 @@ export function ShiftCard({
 }
 
 /** Sửa giao dịch (ca đang mở; nhân viên: ca của mình hôm nay) — không đổi sản phẩm / quà tặng / giá vốn */
-function EditTransaction({ tx, bankAccounts }: { tx: Transaction; bankAccounts: string[] }) {
+function EditTransaction({
+  tx,
+  bankAccounts,
+  giftOptions,
+}: {
+  tx: Transaction & { gifts: TransactionGift[] };
+  bankAccounts: string[];
+  giftOptions: PriceSuggestion[];
+}) {
+  // Quà đã tặng nhưng nay hết hàng / không còn trong gợi ý vẫn phải chọn lại được
+  const options = [
+    ...giftOptions,
+    ...tx.gifts
+      .filter((g) => g.productId && !giftOptions.some((o) => o.productId === g.productId))
+      .map((g): PriceSuggestion => ({ label: g.productName, price: 0, productId: g.productId!, giftable: true })),
+  ];
+  const initialGifts = tx.gifts.map((g) => ({
+    label: options.find((o) => o.productId === g.productId)?.label ?? g.productName,
+    qty: g.quantity,
+  }));
   const fixed = tx.kind === "SIM" || tx.kind === "TOPUP";
   const listId = `edit-accounts-${tx.id}`;
   return (
@@ -397,6 +416,12 @@ function EditTransaction({ tx, bankAccounts }: { tx: Transaction; bankAccounts: 
           <span>Ghi chú</span>
           <input name="note" defaultValue={tx.note ?? ""} className="input" />
         </label>
+        {tx.kind === "SALE" && (
+          <>
+            <input type="hidden" name="giftsEdited" value="1" />
+            <GiftList options={options} initial={initialGifts} />
+          </>
+        )}
       </ActionForm>
     </FormDialog>
   );

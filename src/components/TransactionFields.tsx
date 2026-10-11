@@ -444,8 +444,17 @@ const suggestionMeta = (s: PriceSuggestion) => {
  * Quà tặng kèm khi bán (sạc, tai nghe, ốp lưng, cường lực...): chọn phụ kiện của cửa hàng + số lượng.
  * Giá 0 đ; server trừ số lượng và cộng giá nhập vào giá vốn giao dịch. Chỉ nhận món chọn đúng trong danh sách.
  */
-function GiftList({ options }: { options: PriceSuggestion[] }) {
-  const [rows, setRows] = useState<{ key: number; text: string; qty: number }[]>([]);
+export function GiftList({
+  options,
+  initial = [],
+}: {
+  options: PriceSuggestion[];
+  /** Quà đã có sẵn (form sửa giao dịch) */
+  initial?: { label: string; qty: number }[];
+}) {
+  const [rows, setRows] = useState<{ key: number; text: string; qty: number }[]>(
+    initial.map((g, i) => ({ key: i, text: g.label, qty: g.qty })),
+  );
   const update = (key: number, patch: Partial<{ text: string; qty: number }>) =>
     setRows((r) => r.map((x) => (x.key === key ? { ...x, ...patch } : x)));
 
