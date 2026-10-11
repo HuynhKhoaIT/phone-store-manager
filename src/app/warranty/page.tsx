@@ -5,6 +5,13 @@ import { requirePermission } from "@/lib/auth";
 import { can } from "@/lib/permissions";
 import { formatDate, formatVND, KIND_LABEL, todayVN, warrantyEnd } from "@/lib/format";
 import { Pagination } from "@/components/Pagination";
+import { ActionForm } from "@/components/ActionForm";
+import { FormDialog } from "@/components/FormDialog";
+import { WarrantyExchangeFields } from "@/components/WarrantyExchangeFields";
+import { getCurrentBranch } from "@/lib/branch";
+import { getRecentBankAccounts, getSaleSuggestions } from "@/lib/prices";
+import { exchangeWarranty } from "../actions";
+import { Repeat } from "lucide-react";
 import { getPaging, pageHref, rowClass } from "@/lib/paging";
 
 export default async function WarrantyPage({ searchParams }: { searchParams: Promise<{ q?: string; page?: string }> }) {
@@ -27,12 +34,28 @@ export default async function WarrantyPage({ searchParams }: { searchParams: Pro
   const paging = getPaging(total, sp.page);
   const rows = await prisma.transaction.findMany({
     where,
-    include: { shift: { include: { branch: true } } },
+    include: { shift: { include: { branch: true } }, exchanges: { select: { id: true } }, warrantyOf: { select: { productName: true } } },
     // Thêm id để thứ tự cố định khi phân trang bằng take
     orderBy: [{ createdAt: "desc" }, { id: "desc" }],
     take: paging.take,
   });
   const today = todayVN();
+
+  // Đổi bảo hành cần đang có ca mở hôm nay ở chi nhánh hiện tại (nhân viên: ca của mình)
+  const canExchange = can(me, "warranty-exchange");
+  const branch = canExchange ? await getCurrentBranch() : null;
+  const openShift = branch
+    ? await prisma.shift.findFirst({
+        where: { date: today, branchId: branch.id, closedAt: null, ...(me.role === "ADMIN" ? {} : { userId: me.id }) },
+        select: { id: true },
+      })
+    : null;
+  const bankAccounts = openShift ? await getRecentBankAccounts() : [];
+  const exchangeOptions = openShift
+    ? (await getSaleSuggestions(branch!.id)).saleSuggestions
+        .filter((s) => s.productId && (s.quantity ?? 1) > 0)
+        .map((s) => ({ id: s.productId!, label: s.label, price: s.price }))
+    : [];
 
   return (
     <div className="space-y-5">
@@ -65,6 +88,7 @@ export default async function WarrantyPage({ searchParams }: { searchParams: Pro
               <th>Bảo hành</th>
               <th>Hết hạn</th>
               <th>Chi nhánh</th>
+              {canExchange && <th></th>}
             </tr>
           </thead>
           <tbody>
@@ -83,6 +107,8 @@ export default async function WarrantyPage({ searchParams }: { searchParams: Pro
                     <div>
                       {t.productName}
                       <div className="text-xs text-slate-400">{KIND_LABEL[t.kind]}</div>
+                      {t.warrantyOf && <div className="text-xs text-amber-700">Máy đổi bảo hành cho {t.warrantyOf.productName}</div>}
+                      {t.exchanges.length > 0 && <div className="text-xs text-amber-700">Đã đổi bảo hành {t.exchanges.length} lần</div>}
                     </div>
                   </td>
                   <td data-label="Giá" className="text-right whitespace-nowrap tabular-nums">
@@ -113,12 +139,49 @@ export default async function WarrantyPage({ searchParams }: { searchParams: Pro
                   <td data-label="Chi nhánh" className="whitespace-nowrap">
                     {t.shift.branch.name}
                   </td>
+                  {canExchange && (
+                    <td>
+                      {valid && openShift && t.exchanges.length === 0 && (
+                        <FormDialog
+                          title="Đổi bảo hành"
+                          triggerLabel="Đổi máy"
+                          triggerVariant="secondary"
+                          triggerIcon={<Repeat size={14} aria-hidden />}
+                        >
+                          <ActionForm
+                            action={exchangeWarranty}
+                            submitLabel="Đổi bảo hành"
+                            successMessage="Đã ghi nhận đổi bảo hành."
+                            className="grid gap-3 sm:grid-cols-2"
+                          >
+                            <input type="hidden" name="originalId" value={t.id} />
+                            <p className="text-sm text-slate-600 sm:col-span-2">
+                              Khách <b>{t.customerName}</b> · {t.customerPhone}
+                              <br />
+                              Máy cũ: {t.productName} (hết hạn {formatDate(end)}). Đổi ngang giá thì 0 đ; lấy máy đắt hơn thì
+                              khách bù chênh lệch. Giao dịch ghi vào ca đang mở, giá vốn máy mới tính là chi phí bảo hành.
+                            </p>
+                            <WarrantyExchangeFields
+                              options={exchangeOptions}
+                              originalPrice={t.price}
+                              defaultWarranty={t.warrantyMonths}
+                              bankAccounts={bankAccounts}
+                            />
+                            <label className="field sm:col-span-2">
+                              <span>Lý do / lỗi máy cũ *</span>
+                              <input name="reason" required className="input" placeholder="VD: lỗi màn hình, sạc không vào" />
+                            </label>
+                          </ActionForm>
+                        </FormDialog>
+                      )}
+                    </td>
+                  )}
                 </tr>
               );
             })}
             {rows.length === 0 && (
               <tr>
-                <td colSpan={7} className="py-8 text-center text-slate-500">
+                <td colSpan={8} className="py-8 text-center text-slate-500">
                   Không tìm thấy.
                 </td>
               </tr>

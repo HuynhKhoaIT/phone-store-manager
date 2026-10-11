@@ -97,7 +97,7 @@ model Transaction {
   id              Int                  @id @default(autoincrement())
   shiftId         Int
   shift           Shift                @relation(fields: [shiftId], references: [id], onDelete: Cascade)
-  kind            String // SALE | REPAIR | SIM | TOPUP (nạp card)
+  kind            String // SALE | REPAIR | SIM | TOPUP (nạp card) | WARRANTY (đổi bảo hành)
   /// Sản phẩm trong bảng giá được chọn khi bán (để đánh dấu máy có mã là đã bán, lấy giá nhập)
   productId       Int?
   product         Product?             @relation(fields: [productId], references: [id], onDelete: SetNull)
@@ -129,11 +129,17 @@ model Transaction {
   simNumber       String? // số thuê bao (đã bỏ khoảng trắng / dấu chấm / gạch)
   simSerial       String? // không còn nhập (đã bỏ khỏi form) — giữ cột để db push không xoá dữ liệu cũ
   simPlanPrice    Int? // giá gói cước đăng ký kèm (0 = không đăng ký)
+  /// --- Đổi bảo hành: giao dịch giá 0 đ đưa máy khác đổi cho khách; trỏ về giao dịch gốc đang bảo hành ---
+  /// Giá vốn của máy đổi vẫn tính → báo cáo ghi nhận khoản lỗ do bảo hành. Xoá giao dịch gốc thì liên kết về null.
+  warrantyOfId    Int?
+  warrantyOf      Transaction?         @relation("WarrantyExchange", fields: [warrantyOfId], references: [id], onDelete: SetNull)
+  exchanges       Transaction[]        @relation("WarrantyExchange")
   createdAt       DateTime             @default(now())
 
   @@index([shiftId])
   @@index([customerPhone])
   @@index([financeCompany])
+  @@index([warrantyOfId])
 }
 
 /// Một lần thu tiền trả góp (thường là công ty tài chính chuyển phần còn lại)

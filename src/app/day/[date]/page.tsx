@@ -188,6 +188,7 @@ export default async function DayPage({ params }: { params: Promise<{ date: stri
           key={s.id}
           shift={s}
           canEdit={!s.closedAt && (isAdmin || (canSell && s.userId === me.id && date === today))}
+          canEditTx={can(me, "edit-transactions")}
           isAdmin={isAdmin}
           canCost={canCost}
           defaultCheckOut={date === today ? nowTimeVN() : "21:00"}
