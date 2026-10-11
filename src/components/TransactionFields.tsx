@@ -297,7 +297,7 @@ export function TransactionFields({
             : "Có bảo hành: bắt buộc nhập tên và số điện thoại khách để tra cứu sau này."}
         </p>
       )}
-      {kind === "SALE" && <GiftList options={giftOptions} />}
+      {(kind === "SALE" || kind === "REPAIR") && <GiftList options={giftOptions} />}
       <label className="field sm:col-span-2">
         <span>Ghi chú</span>
         <input name="note" className="input" />

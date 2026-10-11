@@ -402,8 +402,8 @@ export async function addTransaction(fd: FormData): Promise<ActionResult> {
   const markSold = !!product && isSingleUnit(product);
   if (markSold && product.soldBranchId != null) return { error: "Máy này đã được bán trước đó." };
 
-  // Quà tặng kèm (chỉ khi bán): phụ kiện trong hàng hoá, giá 0 đ, trừ số lượng; giá nhập cộng vào giá vốn giao dịch
-  const giftIds = kind === "SALE" ? fd.getAll("giftProductId").map((v) => Number(v) || 0) : [];
+  // Quà tặng kèm (khi bán / sửa chữa): phụ kiện trong hàng hoá, giá 0 đ, trừ số lượng; giá nhập cộng vào giá vốn giao dịch
+  const giftIds = kind === "SALE" || kind === "REPAIR" ? fd.getAll("giftProductId").map((v) => Number(v) || 0) : [];
   const giftQtys = fd.getAll("giftQty").map((v) => Number(v));
   if (giftIds.some((id) => !id)) return { error: "Quà tặng phải chọn từ danh sách phụ kiện của cửa hàng." };
   if (giftQtys.slice(0, giftIds.length).some((q) => !Number.isInteger(q) || q <= 0 || q > 99))
@@ -541,8 +541,8 @@ export async function updateTransaction(fd: FormData): Promise<ActionResult> {
     return { error: "Bắt buộc nhập tên và số điện thoại khách hàng (bảo hành / trả góp)." };
   if (customerPhone && !PHONE_RE.test(customerPhone)) return { error: "Số điện thoại không hợp lệ." };
 
-  // Quà tặng (chỉ đơn bán): form gửi `giftsEdited` thì thay toàn bộ danh sách quà, hoàn / trừ kho và sổ mượn hàng
-  const editGifts = tx.kind === "SALE" && str(fd, "giftsEdited") === "1";
+  // Quà tặng (đơn bán / sửa chữa): form gửi `giftsEdited` thì thay toàn bộ danh sách quà, hoàn / trừ kho và sổ mượn hàng
+  const editGifts = (tx.kind === "SALE" || tx.kind === "REPAIR") && str(fd, "giftsEdited") === "1";
   const giftIds = editGifts ? fd.getAll("giftProductId").map((v) => Number(v) || 0) : [];
   const giftQtys = fd.getAll("giftQty").map((v) => Number(v));
   if (giftIds.some((id) => !id)) return { error: "Quà tặng phải chọn từ danh sách phụ kiện của cửa hàng." };

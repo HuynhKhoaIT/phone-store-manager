@@ -416,7 +416,7 @@ function EditTransaction({
           <span>Ghi chú</span>
           <input name="note" defaultValue={tx.note ?? ""} className="input" />
         </label>
-        {tx.kind === "SALE" && (
+        {(tx.kind === "SALE" || tx.kind === "REPAIR") && (
           <>
             <input type="hidden" name="giftsEdited" value="1" />
             <GiftList options={options} initial={initialGifts} />
