@@ -49,7 +49,7 @@ model User {
   branches     Branch[]         @relation("UserBranches")
   /// Quyền RIÊNG thêm cho nhân viên (khoá trong src/lib/permissions.ts), cộng với quyền của vai trò.
   /// Admin bỏ qua, luôn toàn quyền. Mặc định = quyền nhân viên có sẵn, để tài khoản cũ giữ nguyên khi thêm cột.
-  permissions  String[]         @default(["sell", "products", "repair-prices", "warranty", "timesheet"])
+  permissions  String[]         @default(["sell", "products", "repair-prices", "warranty", "timesheet", "kpi-self"])
   /// Vai trò (Bán hàng, Kế toán...) — quyền thực tế = quyền vai trò + `permissions`. null = chỉ quyền riêng
   staffRoleId  Int?
   staffRole    StaffRole?       @relation(fields: [staffRoleId], references: [id], onDelete: SetNull)
@@ -58,6 +58,8 @@ model User {
   shifts       Shift[]
   checks       ChecklistCheck[]
   posts        Post[]
+  kpiTargets   KpiTarget[]
+  kpiReviews   KpiReview[]
 }
 
 /// Vai trò nhân viên: một bộ quyền dùng chung (Bán hàng, Kế toán, Thủ kho...). Admin không thuộc vai trò nào.
@@ -102,6 +104,9 @@ model Transaction {
   productId       Int?
   product         Product?             @relation(fields: [productId], references: [id], onDelete: SetNull)
   productName     String
+  /// Bán hàng: PHONE | ACCESSORY — chụp từ Product.category khi chọn gợi ý, bán gõ tay thì nhân viên chọn.
+  /// null = đơn cũ / loại khác; KPI suy ra từ sản phẩm gắn kèm, không có thì "Chưa phân loại" (src/lib/kpi-metrics.ts)
+  category        String?
   loans           BranchLoan[]
   gifts           TransactionGift[]
   price           Int
@@ -443,4 +448,91 @@ model Promotion {
 
   @@index([slug])
   @@index([startDate])
+}
+
+/// Chỉ tiêu KPI của một nhân viên trong một tháng — mỗi (tháng, nhân viên, chỉ tiêu) một dòng.
+/// `metric` là khoá trong KPI_METRICS (src/lib/kpi-metrics.ts): cách tính + đơn vị cố định trong code.
+model KpiTarget {
+  id        Int      @id @default(autoincrement())
+  month     String // YYYY-MM
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  metric    String
+  target    Int // mục tiêu (đồng / máy / đơn / khách)
+  weight    Int      @default(1) // trọng số khi tính % hoàn thành chung
+  active    Boolean  @default(true) // tắt = giữ mục tiêu nhưng không tính
+  updatedBy String
+  updatedAt DateTime @updatedAt
+
+  @@unique([month, userId, metric])
+  @@index([month])
+}
+
+/// Cấu hình thưởng KPI, áp dụng từ `fromMonth` cho tới khi có cấu hình mới hơn.
+/// Chưa có dòng nào = dùng mặc định DEFAULT_BONUS (src/lib/kpi-metrics.ts).
+model KpiBonusConfig {
+  id              Int      @id @default(autoincrement())
+  fromMonth       String   @unique // YYYY-MM
+  /// Phương án A — thưởng theo PHẦN, cộng dồn các phần đạt được:
+  /// [{ "name": "Đạt chỉ tiêu cơ bản", "amount": 500000, "requiresFirst": false,
+  ///    "conditions": [{ "type": "COMPLETION_PCT", "value": 100 }, { "type": "METRIC_PCT", "metric": "GROSS_PROFIT", "value": 90 }] }, ...]
+  /// Đọc bằng parseParts (src/lib/kpi-metrics.ts)
+  parts           Json
+  partsEnabled    Boolean  @default(true) // tắt = không thưởng theo phần
+  /// Trần tổng thưởng một nhân viên / tháng (mọi khoản A + B + C); null = không giới hạn
+  maxTotal        Int?
+  /// Phương án B / C theo nhóm hàng (PHONE | ACCESSORY | REPAIR), mỗi nhóm chọn MỘT cách để không thưởng hai lần:
+  /// { "PHONE": { "mode": "COMMISSION", "commission": [{ "fromRevenue": 0, "ratePct": 1 }] }, "REPAIR": { "mode": "PROFIT", "profitPct": 10 } }
+  /// null / thiếu nhóm = không thưởng nhóm đó. Đọc bằng parseGroups (src/lib/kpi-metrics.ts)
+  groups          Json?
+  /// Chỉ tiêu bật sẵn khi đặt KPI lần đầu trong tháng: { "PHONE_COUNT": 2, "ACCESSORY_REVENUE": 1 } (khoá = chỉ tiêu, giá trị = trọng số).
+  /// null = DEFAULT_TARGET_WEIGHTS
+  targetWeights   Json?
+  /// Chỉ tiêu gợi ý = TB 3 tháng trước × % này (105 = tăng 5%)
+  targetGrowthPct Int      @default(105)
+  updatedBy       String
+  updatedAt       DateTime @updatedAt
+}
+
+/// Mẫu cấu hình thưởng (Quán mới mở, Mùa cao điểm...) — admin sửa / thêm được; "Dùng mẫu" điền vào form cấu hình tháng.
+/// Cùng các trường cấu hình như KpiBonusConfig. Tạo sẵn từ KPI_TEMPLATE_PRESETS khi chưa có mẫu nào.
+model KpiTemplate {
+  id              Int      @id @default(autoincrement())
+  name            String   @unique
+  description     String?
+  parts           Json
+  partsEnabled    Boolean  @default(true)
+  maxTotal        Int?
+  groups          Json?
+  targetWeights   Json?
+  targetGrowthPct Int      @default(105)
+  sortOrder       Int      @default(0)
+  updatedBy       String
+  updatedAt       DateTime @updatedAt
+}
+
+/// Mẫu bộ chỉ tiêu (Bán hàng – quán mới, Kỹ thuật sửa chữa...) — áp cho một / nhiều nhân viên ở /kpi/targets.
+/// `targets`: [{ "metric": "PHONE_COUNT", "target": 10, "weight": 2 }, ...]. Tạo sẵn từ TARGET_TEMPLATE_PRESETS khi chưa có mẫu nào.
+model KpiTargetTemplate {
+  id          Int      @id @default(autoincrement())
+  name        String   @unique
+  description String?
+  targets     Json
+  sortOrder   Int      @default(0)
+  updatedBy   String
+  updatedAt   DateTime @updatedAt
+}
+
+/// Đánh giá của chủ quán cho nhân viên trong tháng (điều kiện "Chủ quán đánh giá Đạt" của thưởng theo phần).
+model KpiReview {
+  id         Int      @id @default(autoincrement())
+  month      String // YYYY-MM
+  userId     Int
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  passed     Boolean
+  note       String? // bắt buộc khi Không đạt — để nhân viên biết cần cải thiện gì
+  reviewedBy String
+  updatedAt  DateTime @updatedAt
+
+  @@unique([month, userId])
 }

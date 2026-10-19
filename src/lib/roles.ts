@@ -7,7 +7,7 @@ const DEFAULT_ROLES: { name: string; description: string; permissions: Permissio
   {
     name: "Bán hàng",
     description: "Nhân viên đứng quầy: vào ca, bán hàng, sửa chữa, bảo hành",
-    permissions: ["sell", "products", "repair-prices", "warranty", "timesheet"],
+    permissions: ["sell", "products", "repair-prices", "warranty", "timesheet", "kpi-self"],
   },
   {
     name: "Kế toán",

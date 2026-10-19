@@ -15,6 +15,8 @@ import {
   Receipt,
   ShieldCheck,
   Store,
+  Target,
+  Trophy,
   Tags,
   Users,
   Wrench,
@@ -34,6 +36,8 @@ export type NavItem = {
   tone: string;
   /** Quyền cần có (mảng = có một trong các quyền); không đặt = chỉ admin */
   permission?: Permission | Permission[];
+  /** Chỉ nhân viên (admin không có ca, vd KPI của tôi) */
+  staffOnly?: boolean;
 };
 
 export const HOME_ITEM = {
@@ -50,12 +54,14 @@ export const STAFF_LINKS: NavItem[] = [
   { href: "/repair-prices", match: "/repair-prices", label: "Giá sửa chữa", description: "Thay pin, thay màn...", icon: Wrench, tone: "bg-orange-500", permission: "repair-prices" },
   { href: "/warranty", match: "/warranty", label: "Bảo hành", description: "Tra cứu theo SĐT", icon: ShieldCheck, tone: "bg-emerald-500", permission: "warranty" },
   { href: "/timesheet", match: "/timesheet", label: "Chấm công", description: "Ngày công, giờ làm", icon: Clock, tone: "bg-cyan-600", permission: "timesheet" },
+  { href: "/my-kpi", match: "/my-kpi", label: "KPI của tôi", description: "Chỉ tiêu, tiến độ, thưởng", icon: Trophy, tone: "bg-amber-500", permission: "kpi-self", staffOnly: true },
 ];
 
 export const ADMIN_LINKS: NavItem[] = [
   { href: "/dashboard", match: "/dashboard", label: "Dashboard", description: "Doanh thu tháng", icon: LayoutDashboard, tone: "bg-violet-500", permission: "dashboard" },
   { href: "/reports", match: "/reports", label: "Báo cáo", description: "Lãi lỗ, chi phí, xuất Excel", icon: ChartColumn, tone: "bg-emerald-600", permission: ["reports", "capital", "cost-prices"] },
   { href: "/customers", match: "/customers", label: "Khách hàng", description: "Lịch sử mua, bảo hành", icon: Contact, tone: "bg-orange-500", permission: "customers" },
+  { href: "/kpi", match: "/kpi", label: "KPI & thưởng", description: "Chỉ tiêu, xếp hạng, thưởng doanh số", icon: Target, tone: "bg-lime-600", permission: "kpi" },
   { href: "/history", match: "/history", label: "Lịch sử", description: "Xem lại từng ngày", icon: CalendarDays, tone: "bg-sky-600", permission: "history" },
   { href: "/posts", match: "/posts", label: "Tin tức", description: "Bài viết cho web bán hàng", icon: Newspaper, tone: "bg-rose-500", permission: "posts" },
   { href: "/promotions", match: "/promotions", label: "Khuyến mãi", description: "Chương trình giảm giá, quà tặng", icon: BadgePercent, tone: "bg-red-500", permission: "promotions" },
@@ -69,7 +75,11 @@ export const ADMIN_LINKS: NavItem[] = [
 /** Các mục người dùng được thấy trong menu (sidebar + trang chủ). */
 export function visibleLinks(user: { role: string; permissions: readonly string[] }) {
   const allowed = (l: NavItem) =>
-    l.permission ? [l.permission].flat().some((p) => can(user, p)) : user.role === "ADMIN";
+    l.staffOnly && user.role === "ADMIN"
+      ? false
+      : l.permission
+        ? [l.permission].flat().some((p) => can(user, p))
+        : user.role === "ADMIN";
   return { staff: STAFF_LINKS.filter(allowed), admin: ADMIN_LINKS.filter(allowed) };
 }
 
