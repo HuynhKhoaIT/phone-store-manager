@@ -1308,6 +1308,44 @@ export async function deleteChecklistTask(id: number): Promise<ActionResult> {
   return {};
 }
 
+/** Ngưỡng cảnh báo "sắp hết hàng" ở trang /stock-check (xem src/lib/low-stock.ts). */
+export async function saveLowStockThreshold(fd: FormData): Promise<ActionResult> {
+  const me = await getSessionUser();
+  if (!me || !isAdmin(me)) return NO_PERMISSION;
+  const lowStockThreshold = Number(str(fd, "lowStockThreshold"));
+  if (!Number.isInteger(lowStockThreshold) || lowStockThreshold < 0) return { error: "Ngưỡng cảnh báo không hợp lệ." };
+  await prisma.appSetting.upsert({ where: { id: 1 }, create: { id: 1, lowStockThreshold }, update: { lowStockThreshold } });
+  revalidateTag(TAGS.settings);
+  revalidatePath("/stock-check");
+  return {};
+}
+
+/**
+ * Đánh dấu một sản phẩm Đủ / Thiếu khi đối chiếu hàng hoá trong ngày tại chi nhánh đang làm (trang /stock-check).
+ * Bấm lại cùng trạng thái đang chọn → bỏ đánh dấu (về chưa kiểm tra).
+ */
+export async function setStockCheckItem(productId: number, date: string, status: "OK" | "SHORT"): Promise<ActionResult> {
+  const me = await getSessionUser();
+  if (!me || !can(me, "products")) return NO_PERMISSION;
+  if (!isValidDate(date)) return { error: "Ngày không hợp lệ." };
+  if (!isAdmin(me) && date !== todayVN()) return { error: "Chỉ được đánh dấu ngày hôm nay." };
+  const branch = await getCurrentBranch();
+  if (!branch) return { error: "Vui lòng chọn chi nhánh làm việc." };
+  const product = await prisma.product.findUnique({ where: { id: productId } });
+  if (!product || (product.ownerBranchId != null && product.ownerBranchId !== branch.id))
+    return { error: "Sản phẩm không thuộc chi nhánh này." };
+
+  const key = { date_branchId_productId: { date, branchId: branch.id, productId } };
+  const existing = await prisma.stockCheckItem.findUnique({ where: key });
+  if (existing && !isAdmin(me) && existing.userId !== me.id)
+    return { error: "Mục này do người khác đánh dấu, bạn không thể sửa." };
+  if (existing?.status === status) await prisma.stockCheckItem.delete({ where: key });
+  else if (existing) await prisma.stockCheckItem.update({ where: key, data: { status, userId: me.id, checkedAt: new Date() } });
+  else await prisma.stockCheckItem.create({ data: { date, branchId: branch.id, productId, status, userId: me.id } });
+  revalidatePath("/stock-check");
+  return {};
+}
+
 /** Tick / bỏ tick một việc trong ngày tại chi nhánh đang làm việc. */
 export async function toggleChecklist(taskId: number, date: string): Promise<ActionResult> {
   const me = await getSessionUser();
