@@ -1,20 +1,25 @@
 import Link from "next/link";
 import { getSessionUser } from "@/lib/auth";
-import { can } from "@/lib/permissions";
+import { can, type Permission } from "@/lib/permissions";
 
+type Tab = { href: string; label: string; key: string; permission: Permission | readonly Permission[] };
+
+/** `permission` dạng mảng = có một trong các quyền */
 const TABS = [
   { href: "/reports", label: "Lãi lỗ", key: "pnl", permission: "reports" },
   { href: "/reports/break-even", label: "Hoà vốn", key: "break-even", permission: "capital" },
   { href: "/reports/capital", label: "Góp vốn", key: "capital", permission: "capital" },
+  { href: "/reports/inventory", label: "Tồn kho & vốn", key: "inventory", permission: ["capital", "cost-prices"] },
+  { href: "/reports/fixtures", label: "Vật tư & xây dựng", key: "fixtures", permission: "capital" },
   { href: "/reports/missing-cost", label: "Thiếu giá vốn", key: "missing-cost", permission: "cost-prices" },
-] as const;
+] as const satisfies readonly Tab[];
 
 /** Tab con của trang Báo cáo (cùng kiểu với ProductsTabs) — chỉ hiện tab có quyền. */
 export async function ReportsTabs({ active }: { active: (typeof TABS)[number]["key"] }) {
   const me = await getSessionUser();
-  const tabs = TABS.filter((t) => me && can(me, t.permission));
+  const tabs = TABS.filter((t) => me && [t.permission].flat().some((p) => can(me, p)));
   return (
-    <nav className="flex gap-6 border-b border-slate-200 text-sm" aria-label="Báo cáo">
+    <nav className="flex flex-wrap gap-x-6 gap-y-1 border-b border-slate-200 text-sm" aria-label="Báo cáo">
       {tabs.map((t) => (
         <Link
           key={t.key}

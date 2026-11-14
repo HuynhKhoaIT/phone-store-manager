@@ -333,15 +333,31 @@ export default async function CapitalPage({ searchParams }: { searchParams: Prom
                     </span>
                   </td>
                   <td className="space-x-3 text-right whitespace-nowrap">
-                    <Link href={withParam("edit", e.id)} className="text-sm text-[#1677ff] hover:underline">
-                      Sửa
-                    </Link>
-                    <ConfirmButton
-                      action={deleteCapitalEntry.bind(null, e.id)}
-                      message={`Xoá dòng ${CAPITAL_TYPE_LABEL[e.type].toLowerCase()} ${formatVND(e.amount)} của ${e.investor.name}?`}
-                    >
-                      Xoá
-                    </ConfirmButton>
+                    {/* Góp bằng tiền nhập hàng / vật tư, xây dựng: sửa / xoá theo phiếu, khoản chi gốc */}
+                    {e.receiptId != null ? (
+                      <Link
+                        href={`/products/receipts?month=${e.date.slice(0, 7)}&type=IMPORT`}
+                        className="text-sm text-[#1677ff] hover:underline"
+                      >
+                        Xem phiếu nhập
+                      </Link>
+                    ) : e.spendId != null ? (
+                      <Link href={`/reports/fixtures?edit=${e.spendId}`} className="text-sm text-[#1677ff] hover:underline">
+                        Xem khoản chi
+                      </Link>
+                    ) : (
+                      <>
+                        <Link href={withParam("edit", e.id)} className="text-sm text-[#1677ff] hover:underline">
+                          Sửa
+                        </Link>
+                        <ConfirmButton
+                          action={deleteCapitalEntry.bind(null, e.id)}
+                          message={`Xoá dòng ${CAPITAL_TYPE_LABEL[e.type].toLowerCase()} ${formatVND(e.amount)} của ${e.investor.name}?`}
+                        >
+                          Xoá
+                        </ConfirmButton>
+                      </>
+                    )}
                   </td>
                 </tr>
               ))}

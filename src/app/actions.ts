@@ -12,6 +12,7 @@ import { slugify } from "@/lib/slug";
 import { ADMIN_TASKS, periodKey } from "@/lib/admin-tasks";
 import { can, isPermission } from "@/lib/permissions";
 import { EXPENSE_CATEGORIES } from "@/lib/expenses";
+import { SPEND_CATEGORIES } from "@/lib/capital-spend";
 import { adjustQty, branchTwin, consumeBorrowed } from "@/lib/stock";
 import { RAM_OPTIONS, STORAGE_OPTIONS, isSingleUnit, productLabel } from "@/lib/product-labels";
 import {
@@ -912,64 +913,174 @@ export async function reopenShift(id: number): Promise<ActionResult> {
   return {};
 }
 
-/* ---------------- Nhập hàng giữa chi nhánh ---------------- */
+/* ---------------- Phiếu nhập / chuyển hàng (nhiều dòng) ---------------- */
 
-export async function addStockTransfer(fd: FormData): Promise<ActionResult> {
+/**
+ * Nguồn tiền phiếu nhập từ ô `fund`: "STORE" (quỹ cửa hàng) hoặc id người góp vốn.
+ * Chỉ người có quyền Hoà vốn & góp vốn mới ghi được (vì tiền người góp sẽ vào Sổ góp vốn); thiếu quyền = chưa ghi.
+ */
+async function parseFund(
+  me: SessionUser,
+  fd: FormData,
+): Promise<{ fundSource: string | null; investorId: number | null } | { error: string }> {
+  if (!can(me, "capital")) return { fundSource: null, investorId: null };
+  const raw = str(fd, "fund");
+  if (raw === "STORE") return { fundSource: "STORE", investorId: null };
+  const investorId = Number(raw);
+  if (!investorId) return { fundSource: null, investorId: null };
+  if (!(await prisma.investor.findUnique({ where: { id: investorId } }))) return { error: "Không tìm thấy người góp vốn." };
+  return { fundSource: "INVESTOR", investorId };
+}
+
+/** Tiền người góp vốn bỏ ra nhập phiếu → một dòng Góp vốn vào chi nhánh nhận (xoá phiếu thì xoá theo). */
+function receiptCapitalEntry(
+  r: { id: number; date: string; toBranchId: number; supplier: string | null },
+  investorId: number,
+  amount: number,
+  createdBy: string,
+) {
+  return {
+    type: "CONTRIBUTE",
+    investorId,
+    branchId: r.toBranchId,
+    date: r.date,
+    amount,
+    note: `Nhập hàng phiếu #${r.id}${r.supplier ? ` – ${r.supplier}` : ""}`,
+    receiptId: r.id,
+    createdBy,
+  };
+}
+
+const NEED_COST_FOR_INVESTOR = "Tiền của người góp vốn: phải nhập giá nhập cho mọi dòng hàng để ghi đúng số tiền góp.";
+
+export async function addStockReceipt(fd: FormData): Promise<ActionResult> {
   const me = await getSessionUser();
   if (!me) return NOT_LOGGED_IN;
   if (!can(me, "products")) return NO_PERMISSION;
 
   const type = str(fd, "type") === "IMPORT" ? "IMPORT" : "TRANSFER";
   const date = str(fd, "date");
-  const quantity = Number(str(fd, "quantity"));
   const toBranchId = Number(str(fd, "toBranchId"));
   const fromBranchId = type === "TRANSFER" ? Number(str(fd, "fromBranchId")) : null;
   // Giá nhập chỉ người có quyền Giá nhập & lãi nhập/xem
-  const unitCostRaw = can(me, "cost-prices") && type === "IMPORT" ? str(fd, "unitCost") : "";
-  const unitCost = unitCostRaw ? money(fd, "unitCost") : null;
-
-  // Sản phẩm chọn từ danh sách hàng hoá (hoặc tên gõ tự do nếu chưa có trong danh sách)
-  const productId = Number(str(fd, "productId")) || null;
-  const product = productId ? await prisma.product.findUnique({ where: { id: productId } }) : null;
-  const productName = product ? productLabel(product) : str(fd, "productName");
+  const withCost = type === "IMPORT" && can(me, "cost-prices");
+  const fund = type === "IMPORT" ? await parseFund(me, fd) : { fundSource: null, investorId: null };
+  if ("error" in fund) return { error: fund.error };
 
   if (!isValidDate(date)) return { error: "Ngày không hợp lệ." };
   if (!isAdmin(me) && date > todayVN()) return { error: "Không thể ghi phiếu cho ngày trong tương lai." };
-  if (!productName) return { error: "Vui lòng chọn sản phẩm." };
-  if (!Number.isInteger(quantity) || quantity <= 0) return { error: "Số lượng phải lớn hơn 0." };
-  if (!toBranchId) return { error: "Vui lòng chọn chi nhánh nhận hàng." };
+  if (!toBranchId || !(await prisma.branch.findUnique({ where: { id: toBranchId } })))
+    return { error: "Vui lòng chọn chi nhánh nhận hàng." };
   if (type === "TRANSFER" && (!fromBranchId || fromBranchId === toBranchId))
     return { error: "Chi nhánh gửi và nhận phải khác nhau." };
-  if (unitCost != null && (!Number.isFinite(unitCost) || unitCost < 0)) return { error: "Giá nhập không hợp lệ." };
 
-  if (product && isSingleUnit(product) && quantity !== 1) return { error: "Máy có IMEI chỉ nhập / chuyển 1 máy mỗi phiếu." };
+  // Các dòng hàng: mỗi dòng gửi productName / productId / quantity / unitCost cùng thứ tự; bỏ dòng để trống tên
+  const names = fd.getAll("productName").map((v) => String(v).trim());
+  const ids = fd.getAll("productId").map((v) => Number(v) || null);
+  const qtys = fd.getAll("quantity").map((v) => Number(v));
+  const costs = fd.getAll("unitCost").map((v) => String(v).replace(/\D/g, ""));
+  const raw = names
+    .map((name, i) => ({
+      name,
+      productId: ids[i] ?? null,
+      quantity: qtys[i],
+      unitCost: withCost && costs[i] ? Number(costs[i]) : null,
+    }))
+    .filter((l) => l.name);
+  if (raw.length === 0) return { error: "Vui lòng thêm ít nhất một sản phẩm." };
 
-  await prisma.$transaction(async (db) => {
-    await db.stockTransfer.create({
-      data: {
-        type,
-        date,
-        productId: product?.id ?? null,
-        productName,
-        quantity,
-        fromBranchId,
-        toBranchId,
-        supplier: type === "IMPORT" ? optional(fd, "supplier") : null,
-        unitCost,
-        staffName: me.name,
-        note: optional(fd, "note"),
-      },
-    });
-    if (!product) return;
-    // Phiếu nhập có giá nhập → cập nhật giá nhập mới nhất cho sản phẩm
-    if (unitCost != null) await db.product.update({ where: { id: product.id }, data: { costPrice: unitCost } });
-    await moveStock(db, product, type, quantity, fromBranchId, toBranchId);
+  // Sản phẩm chọn từ danh sách hàng hoá (hoặc tên gõ tự do nếu chưa có trong danh sách)
+  const productIds = [...new Set(raw.map((l) => l.productId).filter((id): id is number => id != null))];
+  const products = new Map(
+    (await prisma.product.findMany({ where: { id: { in: productIds } } })).map((p) => [p.id, p]),
+  );
+  const lines = raw.map((l) => {
+    const product = l.productId ? (products.get(l.productId) ?? null) : null;
+    return { ...l, product, productName: product ? productLabel(product) : l.name };
   });
-  if (product) {
-    revalidateTag(TAGS.prices);
-    revalidatePath("/products");
+  const seenImei = new Set<number>();
+  for (const [i, l] of lines.entries()) {
+    const row = lines.length > 1 ? `Dòng ${i + 1}: ` : "";
+    if (!Number.isInteger(l.quantity) || l.quantity <= 0) return { error: `${row}Số lượng phải lớn hơn 0.` };
+    if (l.product && isSingleUnit(l.product)) {
+      if (l.quantity !== 1) return { error: `${row}Máy có IMEI chỉ nhập / chuyển 1 máy.` };
+      if (seenImei.has(l.product.id)) return { error: `${row}Máy ${l.productName} bị trùng trong phiếu.` };
+      seenImei.add(l.product.id);
+    }
   }
+  const total = lines.reduce((s, l) => s + (l.unitCost ?? 0) * l.quantity, 0);
+  if (fund.fundSource === "INVESTOR" && (lines.some((l) => l.unitCost == null) || total <= 0))
+    return { error: NEED_COST_FOR_INVESTOR };
+
+  const supplier = type === "IMPORT" ? optional(fd, "supplier") : null;
+  const note = optional(fd, "note");
+  await prisma.$transaction(
+    async (db) => {
+      const receipt = await db.stockReceipt.create({
+        data: { type, date, fromBranchId, toBranchId, supplier, ...fund, staffName: me.name, note },
+      });
+      for (const l of lines) {
+        await db.stockTransfer.create({
+          data: {
+            receiptId: receipt.id,
+            type,
+            date,
+            productId: l.product?.id ?? null,
+            productName: l.productName,
+            quantity: l.quantity,
+            fromBranchId,
+            toBranchId,
+            supplier,
+            unitCost: l.unitCost,
+            staffName: me.name,
+          },
+        });
+        if (!l.product) continue;
+        // Phiếu nhập có giá nhập → cập nhật giá nhập mới nhất cho sản phẩm
+        if (l.unitCost != null) await db.product.update({ where: { id: l.product.id }, data: { costPrice: l.unitCost } });
+        await moveStock(db, l.product, type, l.quantity, fromBranchId, toBranchId);
+      }
+      if (fund.investorId)
+        await db.capitalEntry.create({ data: receiptCapitalEntry(receipt, fund.investorId, total, me.name) });
+    },
+    { timeout: 30_000 },
+  );
+  revalidateTag(TAGS.prices);
+  revalidatePath("/products");
   revalidatePath("/products/receipts");
+  if (fund.investorId) revalidatePath("/reports", "layout");
+  return {};
+}
+
+/** Sửa thông tin phiếu nhập: nguồn tiền, nhà cung cấp, ghi chú (không đổi dòng hàng — sai thì xoá phiếu ghi lại). */
+export async function updateStockReceipt(fd: FormData): Promise<ActionResult> {
+  const me = await getSessionUser();
+  if (!me || !can(me, "capital")) return NO_PERMISSION;
+  const receipt = await prisma.stockReceipt.findUnique({
+    where: { id: Number(str(fd, "id")) || 0 },
+    include: { items: { select: { quantity: true, unitCost: true } } },
+  });
+  if (!receipt || receipt.type !== "IMPORT") return { error: "Không tìm thấy phiếu nhập." };
+  const fund = await parseFund(me, fd);
+  if ("error" in fund) return { error: fund.error };
+
+  const total = receipt.items.reduce((s, i) => s + (i.unitCost ?? 0) * i.quantity, 0);
+  if (fund.fundSource === "INVESTOR" && (receipt.items.some((i) => i.unitCost == null) || total <= 0))
+    return { error: NEED_COST_FOR_INVESTOR };
+
+  const supplier = optional(fd, "supplier");
+  await prisma.$transaction(async (db) => {
+    await db.stockReceipt.update({ where: { id: receipt.id }, data: { ...fund, supplier, note: optional(fd, "note") } });
+    await db.stockTransfer.updateMany({ where: { receiptId: receipt.id }, data: { supplier } });
+    // Ghi lại dòng Góp vốn theo nguồn tiền mới
+    await db.capitalEntry.deleteMany({ where: { receiptId: receipt.id } });
+    if (fund.investorId)
+      await db.capitalEntry.create({
+        data: receiptCapitalEntry({ ...receipt, supplier }, fund.investorId, total, me.name),
+      });
+  });
+  revalidatePath("/products/receipts");
+  revalidatePath("/reports", "layout");
   return {};
 }
 
@@ -1004,19 +1115,28 @@ async function moveStock(
   }
 }
 
-export async function deleteStockTransfer(id: number): Promise<ActionResult> {
+/** Xoá cả phiếu (admin): hoàn lại số lượng từng dòng; dòng Góp vốn ghi theo phiếu bị xoá theo (cascade). */
+export async function deleteStockReceipt(id: number): Promise<ActionResult> {
   const me = await getSessionUser();
   if (!me || !isAdmin(me)) return NO_PERMISSION;
-  const t = await prisma.stockTransfer.findUnique({ where: { id }, include: { product: true } });
-  if (!t) return { error: "Không tìm thấy phiếu." };
-  await prisma.$transaction(async (db) => {
-    await db.stockTransfer.delete({ where: { id } });
-    // Hoàn lại số lượng đã cộng / trừ khi tạo phiếu
-    if (t.product) await moveStock(db, t.product, t.type, t.quantity, t.fromBranchId, t.toBranchId, -1);
+  const r = await prisma.stockReceipt.findUnique({
+    where: { id },
+    include: { items: { include: { product: true } }, _count: { select: { capitalEntries: true } } },
   });
+  if (!r) return { error: "Không tìm thấy phiếu." };
+  await prisma.$transaction(
+    async (db) => {
+      // Hoàn lại số lượng đã cộng / trừ khi tạo phiếu
+      for (const t of r.items)
+        if (t.product) await moveStock(db, t.product, t.type, t.quantity, t.fromBranchId, t.toBranchId, -1);
+      await db.stockReceipt.delete({ where: { id } });
+    },
+    { timeout: 30_000 },
+  );
   revalidateTag(TAGS.prices);
   revalidatePath("/products");
   revalidatePath("/products/receipts");
+  if (r._count.capitalEntries > 0) revalidatePath("/reports", "layout");
   return {};
 }
 
@@ -1644,6 +1764,19 @@ export async function saveInvestor(fd: FormData): Promise<ActionResult> {
   return {};
 }
 
+/**
+ * Dòng góp vốn ghi tự động (người góp tự trả phiếu nhập hàng / khoản vật tư, xây dựng) — không sửa / xoá tay
+ * để khớp với phiếu / khoản chi. Trả lỗi nếu là dòng tự động.
+ */
+async function linkedCapitalError(id: number): Promise<ActionResult | null> {
+  const e = await prisma.capitalEntry.findUnique({ where: { id }, select: { receiptId: true, spendId: true } });
+  if (e?.receiptId != null)
+    return { error: "Dòng này ghi tự động theo phiếu nhập hàng — đổi nguồn tiền hoặc xoá phiếu ở Hàng hoá › Phiếu nhập / chuyển." };
+  if (e?.spendId != null)
+    return { error: "Dòng này ghi tự động theo khoản vật tư / xây dựng — sửa hoặc xoá ở Báo cáo › Vật tư & xây dựng." };
+  return null;
+}
+
 export async function saveCapitalEntry(fd: FormData): Promise<ActionResult> {
   const me = await getSessionUser();
   if (!me || !can(me, "capital")) return NO_PERMISSION;
@@ -1662,6 +1795,9 @@ export async function saveCapitalEntry(fd: FormData): Promise<ActionResult> {
   if (!isValidDate(date)) return { error: "Ngày không hợp lệ." };
   if (!Number.isFinite(amount) || amount <= 0) return { error: "Vui lòng nhập số tiền." };
 
+  const linked = id ? await linkedCapitalError(id) : null;
+  if (linked) return linked;
+
   const data = { type, investorId, branchId, date, amount, note: optional(fd, "note") };
   if (id) await prisma.capitalEntry.update({ where: { id }, data });
   else await prisma.capitalEntry.create({ data: { ...data, createdBy: me.name } });
@@ -1673,9 +1809,71 @@ export async function saveCapitalEntry(fd: FormData): Promise<ActionResult> {
 export async function deleteCapitalEntry(id: number): Promise<ActionResult> {
   const me = await getSessionUser();
   if (!me || !can(me, "capital")) return NO_PERMISSION;
+  const linked = await linkedCapitalError(id);
+  if (linked) return linked;
   await prisma.capitalEntry.delete({ where: { id } });
   revalidatePath("/reports", "layout");
   revalidatePath("/branches");
+  return {};
+}
+
+/* ---------------- Vật tư, decor, xây dựng (Báo cáo › Vật tư & xây dựng) ---------------- */
+
+/**
+ * Khoản tiền vốn chi cho vật tư / decor / xây dựng / thiết bị của chi nhánh — không trừ vào lãi.
+ * Tiền riêng của người góp vốn → ghi lại dòng Góp vốn theo khoản chi (xoá dòng cũ, tạo dòng mới).
+ */
+export async function saveCapitalSpend(fd: FormData): Promise<ActionResult> {
+  const me = await getSessionUser();
+  if (!me || !can(me, "capital")) return NO_PERMISSION;
+
+  const id = Number(str(fd, "id")) || null;
+  const date = str(fd, "date");
+  const branchId = Number(str(fd, "branchId"));
+  const category = str(fd, "category");
+  const description = str(fd, "description");
+  const amount = money(fd, "amount");
+  const fund = await parseFund(me, fd);
+  if ("error" in fund) return { error: fund.error };
+
+  if (!isValidDate(date)) return { error: "Ngày không hợp lệ." };
+  if (!branchId || !(await prisma.branch.findUnique({ where: { id: branchId } })))
+    return { error: "Vui lòng chọn chi nhánh." };
+  if (!SPEND_CATEGORIES[category]) return { error: "Vui lòng chọn loại." };
+  if (!description) return { error: "Vui lòng nhập nội dung (mua gì, làm gì)." };
+  if (!Number.isFinite(amount) || amount <= 0) return { error: "Vui lòng nhập số tiền." };
+  if (id && !(await prisma.capitalSpend.findUnique({ where: { id } }))) return { error: "Không tìm thấy khoản chi." };
+
+  const data = { date, branchId, category, description, amount, ...fund, note: optional(fd, "note") };
+  await prisma.$transaction(async (db) => {
+    const spend = id
+      ? await db.capitalSpend.update({ where: { id }, data })
+      : await db.capitalSpend.create({ data: { ...data, createdBy: me.name } });
+    await db.capitalEntry.deleteMany({ where: { spendId: spend.id } });
+    if (fund.investorId)
+      await db.capitalEntry.create({
+        data: {
+          type: "CONTRIBUTE",
+          investorId: fund.investorId,
+          branchId,
+          date,
+          amount,
+          note: `${SPEND_CATEGORIES[category]}: ${description}`,
+          spendId: spend.id,
+          createdBy: me.name,
+        },
+      });
+  });
+  revalidatePath("/reports", "layout");
+  return {};
+}
+
+/** Xoá khoản chi; dòng Góp vốn ghi theo khoản chi bị xoá theo (cascade). */
+export async function deleteCapitalSpend(id: number): Promise<ActionResult> {
+  const me = await getSessionUser();
+  if (!me || !can(me, "capital")) return NO_PERMISSION;
+  await prisma.capitalSpend.delete({ where: { id } });
+  revalidatePath("/reports", "layout");
   return {};
 }
 
