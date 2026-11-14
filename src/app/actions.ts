@@ -7,13 +7,24 @@ import type { Prisma, Product } from "@prisma/client";
 import { TAGS } from "@/lib/cache";
 import { prisma } from "@/lib/db";
 import { BRANCH_COOKIE, getAllowedBranches, getCurrentBranch } from "@/lib/branch";
-import { isValidDate, todayVN, warrantyEnd } from "@/lib/format";
+import { addMonths, isValidDate, isValidMonth, todayVN, warrantyEnd } from "@/lib/format";
 import { slugify } from "@/lib/slug";
 import { ADMIN_TASKS, periodKey } from "@/lib/admin-tasks";
 import { can, isPermission } from "@/lib/permissions";
 import { EXPENSE_CATEGORIES } from "@/lib/expenses";
+import { SPEND_CATEGORIES } from "@/lib/capital-spend";
 import { adjustQty, branchTwin, consumeBorrowed } from "@/lib/stock";
 import { RAM_OPTIONS, STORAGE_OPTIONS, isSingleUnit, productLabel } from "@/lib/product-labels";
+import {
+  BONUS_GROUPS,
+  categoryOfProduct,
+  isConditionType,
+  isMetric,
+  KPI_METRICS,
+  parseTemplateTargets,
+  type BonusPart,
+  type Condition,
+} from "@/lib/kpi-metrics";
 import {
   createSession,
   destroySession,
@@ -401,6 +412,9 @@ export async function addTransaction(fd: FormData): Promise<ActionResult> {
   const product = productId ? await prisma.product.findUnique({ where: { id: productId } }) : null;
   const markSold = !!product && isSingleUnit(product);
   if (markSold && product.soldBranchId != null) return { error: "Máy này đã được bán trước đó." };
+  // Loại hàng cho KPI: chọn gợi ý thì lấy theo sản phẩm, bán gõ tay thì nhân viên chọn
+  const category = kind === "SALE" ? (categoryOfProduct(product?.category) ?? saleCategory(fd)) : null;
+  if (kind === "SALE" && !category) return { error: "Vui lòng chọn loại hàng: Điện thoại hay Phụ kiện." };
 
   // Quà tặng kèm (khi bán / sửa chữa): phụ kiện trong hàng hoá, giá 0 đ, trừ số lượng; giá nhập cộng vào giá vốn giao dịch
   const giftIds = kind === "SALE" || kind === "REPAIR" ? fd.getAll("giftProductId").map((v) => Number(v) || 0) : [];
@@ -430,6 +444,7 @@ export async function addTransaction(fd: FormData): Promise<ActionResult> {
         giftCost,
         // Chọn đúng gợi ý thì lưu tên chuẩn (gợi ý có thể kèm "(hàng quán khác)")
         productName: product ? productLabel(product) : productName,
+        category,
         price,
         paymentMethod,
         bankAccount,
@@ -490,6 +505,12 @@ function simFields(fd: FormData) {
   return { simCarrier, simNumber, simPlanPrice, price: simPrice + simPlanPrice };
 }
 
+/** Loại hàng bán gõ tay (form gửi `category`): PHONE | ACCESSORY | null */
+function saleCategory(fd: FormData) {
+  const v = str(fd, "category");
+  return v === "PHONE" || v === "ACCESSORY" ? v : null;
+}
+
 /** Đọc + kiểm tra phần nạp card: nhà mạng + số tiền nạp */
 function topupFields(fd: FormData) {
   const simCarrier = str(fd, "simCarrier");
@@ -540,6 +561,8 @@ export async function updateTransaction(fd: FormData): Promise<ActionResult> {
   if ((warrantyMonths > 0 || tx.financeCompany) && (!customerName || !customerPhone))
     return { error: "Bắt buộc nhập tên và số điện thoại khách hàng (bảo hành / trả góp)." };
   if (customerPhone && !PHONE_RE.test(customerPhone)) return { error: "Số điện thoại không hợp lệ." };
+  // Đơn bán gõ tay (không gắn sản phẩm) đổi được loại hàng; gắn sản phẩm thì loại theo sản phẩm
+  const category = tx.kind === "SALE" && !tx.productId ? (saleCategory(fd) ?? tx.category) : tx.category;
 
   // Quà tặng (đơn bán / sửa chữa): form gửi `giftsEdited` thì thay toàn bộ danh sách quà, hoàn / trừ kho và sổ mượn hàng
   const editGifts = (tx.kind === "SALE" || tx.kind === "REPAIR") && str(fd, "giftsEdited") === "1";
@@ -587,6 +610,7 @@ export async function updateTransaction(fd: FormData): Promise<ActionResult> {
     data: {
       ...(editGifts && { giftCost }),
       productName,
+      category,
       price,
       // SIM / nạp card không có lãi: giá vốn luôn bằng giá thu
       costPrice: tx.kind === "SIM" || tx.kind === "TOPUP" ? price : tx.costPrice,
@@ -889,64 +913,174 @@ export async function reopenShift(id: number): Promise<ActionResult> {
   return {};
 }
 
-/* ---------------- Nhập hàng giữa chi nhánh ---------------- */
+/* ---------------- Phiếu nhập / chuyển hàng (nhiều dòng) ---------------- */
 
-export async function addStockTransfer(fd: FormData): Promise<ActionResult> {
+/**
+ * Nguồn tiền phiếu nhập từ ô `fund`: "STORE" (quỹ cửa hàng) hoặc id người góp vốn.
+ * Chỉ người có quyền Hoà vốn & góp vốn mới ghi được (vì tiền người góp sẽ vào Sổ góp vốn); thiếu quyền = chưa ghi.
+ */
+async function parseFund(
+  me: SessionUser,
+  fd: FormData,
+): Promise<{ fundSource: string | null; investorId: number | null } | { error: string }> {
+  if (!can(me, "capital")) return { fundSource: null, investorId: null };
+  const raw = str(fd, "fund");
+  if (raw === "STORE") return { fundSource: "STORE", investorId: null };
+  const investorId = Number(raw);
+  if (!investorId) return { fundSource: null, investorId: null };
+  if (!(await prisma.investor.findUnique({ where: { id: investorId } }))) return { error: "Không tìm thấy người góp vốn." };
+  return { fundSource: "INVESTOR", investorId };
+}
+
+/** Tiền người góp vốn bỏ ra nhập phiếu → một dòng Góp vốn vào chi nhánh nhận (xoá phiếu thì xoá theo). */
+function receiptCapitalEntry(
+  r: { id: number; date: string; toBranchId: number; supplier: string | null },
+  investorId: number,
+  amount: number,
+  createdBy: string,
+) {
+  return {
+    type: "CONTRIBUTE",
+    investorId,
+    branchId: r.toBranchId,
+    date: r.date,
+    amount,
+    note: `Nhập hàng phiếu #${r.id}${r.supplier ? ` – ${r.supplier}` : ""}`,
+    receiptId: r.id,
+    createdBy,
+  };
+}
+
+const NEED_COST_FOR_INVESTOR = "Tiền của người góp vốn: phải nhập giá nhập cho mọi dòng hàng để ghi đúng số tiền góp.";
+
+export async function addStockReceipt(fd: FormData): Promise<ActionResult> {
   const me = await getSessionUser();
   if (!me) return NOT_LOGGED_IN;
   if (!can(me, "products")) return NO_PERMISSION;
 
   const type = str(fd, "type") === "IMPORT" ? "IMPORT" : "TRANSFER";
   const date = str(fd, "date");
-  const quantity = Number(str(fd, "quantity"));
   const toBranchId = Number(str(fd, "toBranchId"));
   const fromBranchId = type === "TRANSFER" ? Number(str(fd, "fromBranchId")) : null;
   // Giá nhập chỉ người có quyền Giá nhập & lãi nhập/xem
-  const unitCostRaw = can(me, "cost-prices") && type === "IMPORT" ? str(fd, "unitCost") : "";
-  const unitCost = unitCostRaw ? money(fd, "unitCost") : null;
-
-  // Sản phẩm chọn từ danh sách hàng hoá (hoặc tên gõ tự do nếu chưa có trong danh sách)
-  const productId = Number(str(fd, "productId")) || null;
-  const product = productId ? await prisma.product.findUnique({ where: { id: productId } }) : null;
-  const productName = product ? productLabel(product) : str(fd, "productName");
+  const withCost = type === "IMPORT" && can(me, "cost-prices");
+  const fund = type === "IMPORT" ? await parseFund(me, fd) : { fundSource: null, investorId: null };
+  if ("error" in fund) return { error: fund.error };
 
   if (!isValidDate(date)) return { error: "Ngày không hợp lệ." };
   if (!isAdmin(me) && date > todayVN()) return { error: "Không thể ghi phiếu cho ngày trong tương lai." };
-  if (!productName) return { error: "Vui lòng chọn sản phẩm." };
-  if (!Number.isInteger(quantity) || quantity <= 0) return { error: "Số lượng phải lớn hơn 0." };
-  if (!toBranchId) return { error: "Vui lòng chọn chi nhánh nhận hàng." };
+  if (!toBranchId || !(await prisma.branch.findUnique({ where: { id: toBranchId } })))
+    return { error: "Vui lòng chọn chi nhánh nhận hàng." };
   if (type === "TRANSFER" && (!fromBranchId || fromBranchId === toBranchId))
     return { error: "Chi nhánh gửi và nhận phải khác nhau." };
-  if (unitCost != null && (!Number.isFinite(unitCost) || unitCost < 0)) return { error: "Giá nhập không hợp lệ." };
 
-  if (product && isSingleUnit(product) && quantity !== 1) return { error: "Máy có IMEI chỉ nhập / chuyển 1 máy mỗi phiếu." };
+  // Các dòng hàng: mỗi dòng gửi productName / productId / quantity / unitCost cùng thứ tự; bỏ dòng để trống tên
+  const names = fd.getAll("productName").map((v) => String(v).trim());
+  const ids = fd.getAll("productId").map((v) => Number(v) || null);
+  const qtys = fd.getAll("quantity").map((v) => Number(v));
+  const costs = fd.getAll("unitCost").map((v) => String(v).replace(/\D/g, ""));
+  const raw = names
+    .map((name, i) => ({
+      name,
+      productId: ids[i] ?? null,
+      quantity: qtys[i],
+      unitCost: withCost && costs[i] ? Number(costs[i]) : null,
+    }))
+    .filter((l) => l.name);
+  if (raw.length === 0) return { error: "Vui lòng thêm ít nhất một sản phẩm." };
 
-  await prisma.$transaction(async (db) => {
-    await db.stockTransfer.create({
-      data: {
-        type,
-        date,
-        productId: product?.id ?? null,
-        productName,
-        quantity,
-        fromBranchId,
-        toBranchId,
-        supplier: type === "IMPORT" ? optional(fd, "supplier") : null,
-        unitCost,
-        staffName: me.name,
-        note: optional(fd, "note"),
-      },
-    });
-    if (!product) return;
-    // Phiếu nhập có giá nhập → cập nhật giá nhập mới nhất cho sản phẩm
-    if (unitCost != null) await db.product.update({ where: { id: product.id }, data: { costPrice: unitCost } });
-    await moveStock(db, product, type, quantity, fromBranchId, toBranchId);
+  // Sản phẩm chọn từ danh sách hàng hoá (hoặc tên gõ tự do nếu chưa có trong danh sách)
+  const productIds = [...new Set(raw.map((l) => l.productId).filter((id): id is number => id != null))];
+  const products = new Map(
+    (await prisma.product.findMany({ where: { id: { in: productIds } } })).map((p) => [p.id, p]),
+  );
+  const lines = raw.map((l) => {
+    const product = l.productId ? (products.get(l.productId) ?? null) : null;
+    return { ...l, product, productName: product ? productLabel(product) : l.name };
   });
-  if (product) {
-    revalidateTag(TAGS.prices);
-    revalidatePath("/products");
+  const seenImei = new Set<number>();
+  for (const [i, l] of lines.entries()) {
+    const row = lines.length > 1 ? `Dòng ${i + 1}: ` : "";
+    if (!Number.isInteger(l.quantity) || l.quantity <= 0) return { error: `${row}Số lượng phải lớn hơn 0.` };
+    if (l.product && isSingleUnit(l.product)) {
+      if (l.quantity !== 1) return { error: `${row}Máy có IMEI chỉ nhập / chuyển 1 máy.` };
+      if (seenImei.has(l.product.id)) return { error: `${row}Máy ${l.productName} bị trùng trong phiếu.` };
+      seenImei.add(l.product.id);
+    }
   }
+  const total = lines.reduce((s, l) => s + (l.unitCost ?? 0) * l.quantity, 0);
+  if (fund.fundSource === "INVESTOR" && (lines.some((l) => l.unitCost == null) || total <= 0))
+    return { error: NEED_COST_FOR_INVESTOR };
+
+  const supplier = type === "IMPORT" ? optional(fd, "supplier") : null;
+  const note = optional(fd, "note");
+  await prisma.$transaction(
+    async (db) => {
+      const receipt = await db.stockReceipt.create({
+        data: { type, date, fromBranchId, toBranchId, supplier, ...fund, staffName: me.name, note },
+      });
+      for (const l of lines) {
+        await db.stockTransfer.create({
+          data: {
+            receiptId: receipt.id,
+            type,
+            date,
+            productId: l.product?.id ?? null,
+            productName: l.productName,
+            quantity: l.quantity,
+            fromBranchId,
+            toBranchId,
+            supplier,
+            unitCost: l.unitCost,
+            staffName: me.name,
+          },
+        });
+        if (!l.product) continue;
+        // Phiếu nhập có giá nhập → cập nhật giá nhập mới nhất cho sản phẩm
+        if (l.unitCost != null) await db.product.update({ where: { id: l.product.id }, data: { costPrice: l.unitCost } });
+        await moveStock(db, l.product, type, l.quantity, fromBranchId, toBranchId);
+      }
+      if (fund.investorId)
+        await db.capitalEntry.create({ data: receiptCapitalEntry(receipt, fund.investorId, total, me.name) });
+    },
+    { timeout: 30_000 },
+  );
+  revalidateTag(TAGS.prices);
+  revalidatePath("/products");
   revalidatePath("/products/receipts");
+  if (fund.investorId) revalidatePath("/reports", "layout");
+  return {};
+}
+
+/** Sửa thông tin phiếu nhập: nguồn tiền, nhà cung cấp, ghi chú (không đổi dòng hàng — sai thì xoá phiếu ghi lại). */
+export async function updateStockReceipt(fd: FormData): Promise<ActionResult> {
+  const me = await getSessionUser();
+  if (!me || !can(me, "capital")) return NO_PERMISSION;
+  const receipt = await prisma.stockReceipt.findUnique({
+    where: { id: Number(str(fd, "id")) || 0 },
+    include: { items: { select: { quantity: true, unitCost: true } } },
+  });
+  if (!receipt || receipt.type !== "IMPORT") return { error: "Không tìm thấy phiếu nhập." };
+  const fund = await parseFund(me, fd);
+  if ("error" in fund) return { error: fund.error };
+
+  const total = receipt.items.reduce((s, i) => s + (i.unitCost ?? 0) * i.quantity, 0);
+  if (fund.fundSource === "INVESTOR" && (receipt.items.some((i) => i.unitCost == null) || total <= 0))
+    return { error: NEED_COST_FOR_INVESTOR };
+
+  const supplier = optional(fd, "supplier");
+  await prisma.$transaction(async (db) => {
+    await db.stockReceipt.update({ where: { id: receipt.id }, data: { ...fund, supplier, note: optional(fd, "note") } });
+    await db.stockTransfer.updateMany({ where: { receiptId: receipt.id }, data: { supplier } });
+    // Ghi lại dòng Góp vốn theo nguồn tiền mới
+    await db.capitalEntry.deleteMany({ where: { receiptId: receipt.id } });
+    if (fund.investorId)
+      await db.capitalEntry.create({
+        data: receiptCapitalEntry({ ...receipt, supplier }, fund.investorId, total, me.name),
+      });
+  });
+  revalidatePath("/products/receipts");
+  revalidatePath("/reports", "layout");
   return {};
 }
 
@@ -981,19 +1115,28 @@ async function moveStock(
   }
 }
 
-export async function deleteStockTransfer(id: number): Promise<ActionResult> {
+/** Xoá cả phiếu (admin): hoàn lại số lượng từng dòng; dòng Góp vốn ghi theo phiếu bị xoá theo (cascade). */
+export async function deleteStockReceipt(id: number): Promise<ActionResult> {
   const me = await getSessionUser();
   if (!me || !isAdmin(me)) return NO_PERMISSION;
-  const t = await prisma.stockTransfer.findUnique({ where: { id }, include: { product: true } });
-  if (!t) return { error: "Không tìm thấy phiếu." };
-  await prisma.$transaction(async (db) => {
-    await db.stockTransfer.delete({ where: { id } });
-    // Hoàn lại số lượng đã cộng / trừ khi tạo phiếu
-    if (t.product) await moveStock(db, t.product, t.type, t.quantity, t.fromBranchId, t.toBranchId, -1);
+  const r = await prisma.stockReceipt.findUnique({
+    where: { id },
+    include: { items: { include: { product: true } }, _count: { select: { capitalEntries: true } } },
   });
+  if (!r) return { error: "Không tìm thấy phiếu." };
+  await prisma.$transaction(
+    async (db) => {
+      // Hoàn lại số lượng đã cộng / trừ khi tạo phiếu
+      for (const t of r.items)
+        if (t.product) await moveStock(db, t.product, t.type, t.quantity, t.fromBranchId, t.toBranchId, -1);
+      await db.stockReceipt.delete({ where: { id } });
+    },
+    { timeout: 30_000 },
+  );
   revalidateTag(TAGS.prices);
   revalidatePath("/products");
   revalidatePath("/products/receipts");
+  if (r._count.capitalEntries > 0) revalidatePath("/reports", "layout");
   return {};
 }
 
@@ -1282,6 +1425,44 @@ export async function deleteChecklistTask(id: number): Promise<ActionResult> {
   if (!me || !can(me, "checklist")) return NO_PERMISSION;
   await prisma.checklistTask.delete({ where: { id } });
   revalidatePath("/checklist");
+  return {};
+}
+
+/** Ngưỡng cảnh báo "sắp hết hàng" ở trang /stock-check (xem src/lib/low-stock.ts). */
+export async function saveLowStockThreshold(fd: FormData): Promise<ActionResult> {
+  const me = await getSessionUser();
+  if (!me || !isAdmin(me)) return NO_PERMISSION;
+  const lowStockThreshold = Number(str(fd, "lowStockThreshold"));
+  if (!Number.isInteger(lowStockThreshold) || lowStockThreshold < 0) return { error: "Ngưỡng cảnh báo không hợp lệ." };
+  await prisma.appSetting.upsert({ where: { id: 1 }, create: { id: 1, lowStockThreshold }, update: { lowStockThreshold } });
+  revalidateTag(TAGS.settings);
+  revalidatePath("/stock-check");
+  return {};
+}
+
+/**
+ * Đánh dấu một sản phẩm Đủ / Thiếu khi đối chiếu hàng hoá trong ngày tại chi nhánh đang làm (trang /stock-check).
+ * Bấm lại cùng trạng thái đang chọn → bỏ đánh dấu (về chưa kiểm tra).
+ */
+export async function setStockCheckItem(productId: number, date: string, status: "OK" | "SHORT"): Promise<ActionResult> {
+  const me = await getSessionUser();
+  if (!me || !can(me, "products")) return NO_PERMISSION;
+  if (!isValidDate(date)) return { error: "Ngày không hợp lệ." };
+  if (!isAdmin(me) && date !== todayVN()) return { error: "Chỉ được đánh dấu ngày hôm nay." };
+  const branch = await getCurrentBranch();
+  if (!branch) return { error: "Vui lòng chọn chi nhánh làm việc." };
+  const product = await prisma.product.findUnique({ where: { id: productId } });
+  if (!product || (product.ownerBranchId != null && product.ownerBranchId !== branch.id))
+    return { error: "Sản phẩm không thuộc chi nhánh này." };
+
+  const key = { date_branchId_productId: { date, branchId: branch.id, productId } };
+  const existing = await prisma.stockCheckItem.findUnique({ where: key });
+  if (existing && !isAdmin(me) && existing.userId !== me.id)
+    return { error: "Mục này do người khác đánh dấu, bạn không thể sửa." };
+  if (existing?.status === status) await prisma.stockCheckItem.delete({ where: key });
+  else if (existing) await prisma.stockCheckItem.update({ where: key, data: { status, userId: me.id, checkedAt: new Date() } });
+  else await prisma.stockCheckItem.create({ data: { date, branchId: branch.id, productId, status, userId: me.id } });
+  revalidatePath("/stock-check");
   return {};
 }
 
@@ -1583,6 +1764,19 @@ export async function saveInvestor(fd: FormData): Promise<ActionResult> {
   return {};
 }
 
+/**
+ * Dòng góp vốn ghi tự động (người góp tự trả phiếu nhập hàng / khoản vật tư, xây dựng) — không sửa / xoá tay
+ * để khớp với phiếu / khoản chi. Trả lỗi nếu là dòng tự động.
+ */
+async function linkedCapitalError(id: number): Promise<ActionResult | null> {
+  const e = await prisma.capitalEntry.findUnique({ where: { id }, select: { receiptId: true, spendId: true } });
+  if (e?.receiptId != null)
+    return { error: "Dòng này ghi tự động theo phiếu nhập hàng — đổi nguồn tiền hoặc xoá phiếu ở Hàng hoá › Phiếu nhập / chuyển." };
+  if (e?.spendId != null)
+    return { error: "Dòng này ghi tự động theo khoản vật tư / xây dựng — sửa hoặc xoá ở Báo cáo › Vật tư & xây dựng." };
+  return null;
+}
+
 export async function saveCapitalEntry(fd: FormData): Promise<ActionResult> {
   const me = await getSessionUser();
   if (!me || !can(me, "capital")) return NO_PERMISSION;
@@ -1601,6 +1795,9 @@ export async function saveCapitalEntry(fd: FormData): Promise<ActionResult> {
   if (!isValidDate(date)) return { error: "Ngày không hợp lệ." };
   if (!Number.isFinite(amount) || amount <= 0) return { error: "Vui lòng nhập số tiền." };
 
+  const linked = id ? await linkedCapitalError(id) : null;
+  if (linked) return linked;
+
   const data = { type, investorId, branchId, date, amount, note: optional(fd, "note") };
   if (id) await prisma.capitalEntry.update({ where: { id }, data });
   else await prisma.capitalEntry.create({ data: { ...data, createdBy: me.name } });
@@ -1612,9 +1809,71 @@ export async function saveCapitalEntry(fd: FormData): Promise<ActionResult> {
 export async function deleteCapitalEntry(id: number): Promise<ActionResult> {
   const me = await getSessionUser();
   if (!me || !can(me, "capital")) return NO_PERMISSION;
+  const linked = await linkedCapitalError(id);
+  if (linked) return linked;
   await prisma.capitalEntry.delete({ where: { id } });
   revalidatePath("/reports", "layout");
   revalidatePath("/branches");
+  return {};
+}
+
+/* ---------------- Vật tư, decor, xây dựng (Báo cáo › Vật tư & xây dựng) ---------------- */
+
+/**
+ * Khoản tiền vốn chi cho vật tư / decor / xây dựng / thiết bị của chi nhánh — không trừ vào lãi.
+ * Tiền riêng của người góp vốn → ghi lại dòng Góp vốn theo khoản chi (xoá dòng cũ, tạo dòng mới).
+ */
+export async function saveCapitalSpend(fd: FormData): Promise<ActionResult> {
+  const me = await getSessionUser();
+  if (!me || !can(me, "capital")) return NO_PERMISSION;
+
+  const id = Number(str(fd, "id")) || null;
+  const date = str(fd, "date");
+  const branchId = Number(str(fd, "branchId"));
+  const category = str(fd, "category");
+  const description = str(fd, "description");
+  const amount = money(fd, "amount");
+  const fund = await parseFund(me, fd);
+  if ("error" in fund) return { error: fund.error };
+
+  if (!isValidDate(date)) return { error: "Ngày không hợp lệ." };
+  if (!branchId || !(await prisma.branch.findUnique({ where: { id: branchId } })))
+    return { error: "Vui lòng chọn chi nhánh." };
+  if (!SPEND_CATEGORIES[category]) return { error: "Vui lòng chọn loại." };
+  if (!description) return { error: "Vui lòng nhập nội dung (mua gì, làm gì)." };
+  if (!Number.isFinite(amount) || amount <= 0) return { error: "Vui lòng nhập số tiền." };
+  if (id && !(await prisma.capitalSpend.findUnique({ where: { id } }))) return { error: "Không tìm thấy khoản chi." };
+
+  const data = { date, branchId, category, description, amount, ...fund, note: optional(fd, "note") };
+  await prisma.$transaction(async (db) => {
+    const spend = id
+      ? await db.capitalSpend.update({ where: { id }, data })
+      : await db.capitalSpend.create({ data: { ...data, createdBy: me.name } });
+    await db.capitalEntry.deleteMany({ where: { spendId: spend.id } });
+    if (fund.investorId)
+      await db.capitalEntry.create({
+        data: {
+          type: "CONTRIBUTE",
+          investorId: fund.investorId,
+          branchId,
+          date,
+          amount,
+          note: `${SPEND_CATEGORIES[category]}: ${description}`,
+          spendId: spend.id,
+          createdBy: me.name,
+        },
+      });
+  });
+  revalidatePath("/reports", "layout");
+  return {};
+}
+
+/** Xoá khoản chi; dòng Góp vốn ghi theo khoản chi bị xoá theo (cascade). */
+export async function deleteCapitalSpend(id: number): Promise<ActionResult> {
+  const me = await getSessionUser();
+  if (!me || !can(me, "capital")) return NO_PERMISSION;
+  await prisma.capitalSpend.delete({ where: { id } });
+  revalidatePath("/reports", "layout");
   return {};
 }
 
@@ -1705,5 +1964,354 @@ export async function deleteLoan(id: number): Promise<ActionResult> {
   if (!me || !isAdmin(me)) return NO_PERMISSION;
   await prisma.branchLoan.delete({ where: { id } });
   revalidatePath("/products/loans");
+  return {};
+}
+
+/* ---------------- KPI & thưởng ---------------- */
+
+/**
+ * Đặt chỉ tiêu tháng cho một nhân viên (và áp dụng cùng bộ chỉ tiêu cho các nhân viên tick thêm).
+ * Thay toàn bộ chỉ tiêu tháng đó của những người được chọn. Quyền `kpi`, nhưng không ai tự đặt chỉ tiêu cho mình
+ * (trừ admin — admin không có ca nên cũng không có KPI).
+ */
+export async function saveKpiTargets(fd: FormData): Promise<ActionResult> {
+  const me = await getSessionUser();
+  if (!me) return NOT_LOGGED_IN;
+  if (!can(me, "kpi")) return NO_PERMISSION;
+
+  const month = str(fd, "month");
+  if (!isValidMonth(month)) return { error: "Tháng không hợp lệ." };
+  const userIds = [...new Set([Number(str(fd, "userId")), ...fd.getAll("alsoUserIds").map(Number)])].filter(
+    (id) => Number.isInteger(id) && id > 0,
+  );
+  if (!userIds.length) return { error: "Vui lòng chọn nhân viên." };
+  if (!isAdmin(me) && userIds.includes(me.id)) return { error: "Không thể tự đặt chỉ tiêu KPI cho chính mình." };
+  const users = await prisma.user.findMany({ where: { id: { in: userIds }, role: "STAFF" }, select: { id: true } });
+  if (users.length !== userIds.length) return { error: "Chỉ đặt KPI cho tài khoản nhân viên." };
+
+  const parsed = parseTargetRows(fd);
+  if ("error" in parsed) return { error: parsed.error };
+  const { rows } = parsed;
+
+  await prisma.$transaction([
+    prisma.kpiTarget.deleteMany({ where: { month, userId: { in: userIds } } }),
+    prisma.kpiTarget.createMany({
+      data: userIds.flatMap((userId) => rows.map((r) => ({ ...r, month, userId, updatedBy: me.name }))),
+    }),
+  ]);
+  revalidatePath("/kpi", "layout");
+  revalidatePath("/my-kpi");
+  return {};
+}
+
+/** Đọc các dòng chỉ tiêu của form (tick `active_`, `target_`, `weight_` từng chỉ tiêu) — chỉ tiêu nhân viên và mẫu */
+function parseTargetRows(fd: FormData) {
+  const rows: { metric: string; target: number; weight: number; active: boolean }[] = [];
+  for (const m of KPI_METRICS) {
+    const raw = str(fd, `target_${m.key}`);
+    const active = str(fd, `active_${m.key}`) === "on";
+    if (!raw) {
+      if (active) return { error: `Vui lòng nhập mục tiêu cho "${m.label}".` };
+      continue;
+    }
+    const target = Number(raw.replace(/\D/g, ""));
+    const weight = Number(str(fd, `weight_${m.key}`) || 1);
+    if (!Number.isSafeInteger(target) || target <= 0) return { error: `Mục tiêu "${m.label}" phải lớn hơn 0.` };
+    if (!Number.isInteger(weight) || weight < 1 || weight > 10) return { error: `Trọng số "${m.label}" từ 1 đến 10.` };
+    rows.push({ metric: m.key, target, weight, active });
+  }
+  if (rows.length && !rows.some((r) => r.active)) return { error: "Bật ít nhất một chỉ tiêu (hoặc xoá hết mục tiêu)." };
+  return { rows };
+}
+
+/** Thêm / sửa mẫu bộ chỉ tiêu. Quyền `kpi` (cùng quyền đặt chỉ tiêu); mẫu chỉ lưu chỉ tiêu đang bật. */
+export async function saveKpiTargetTemplate(fd: FormData): Promise<ActionResult> {
+  const me = await getSessionUser();
+  if (!me) return NOT_LOGGED_IN;
+  if (!can(me, "kpi")) return NO_PERMISSION;
+  const id = Number(str(fd, "id")) || null;
+  const name = str(fd, "name");
+  if (!name || name.length > 60) return { error: "Vui lòng nhập tên mẫu (tối đa 60 ký tự)." };
+  // So sánh trong JS: Postgres (collation C) không bỏ qua hoa / thường của chữ có dấu tiếng Việt
+  const key = (v: string) => v.normalize("NFC").toLocaleLowerCase("vi");
+  const dup = (await prisma.kpiTargetTemplate.findMany({ select: { id: true, name: true } })).find((t) => key(t.name) === key(name));
+  if (dup && dup.id !== id) return { error: "Tên mẫu đã có." };
+  const parsed = parseTargetRows(fd);
+  if ("error" in parsed) return { error: parsed.error };
+  const targets = parsed.rows.filter((r) => r.active).map(({ metric, target, weight }) => ({ metric, target, weight }));
+  if (!targets.length) return { error: "Mẫu cần ít nhất một chỉ tiêu." };
+
+  const data = { name, description: optional(fd, "description"), targets, updatedBy: me.name };
+  if (id) await prisma.kpiTargetTemplate.update({ where: { id }, data });
+  else {
+    const last = await prisma.kpiTargetTemplate.aggregate({ _max: { sortOrder: true } });
+    await prisma.kpiTargetTemplate.create({ data: { ...data, sortOrder: (last._max.sortOrder ?? 0) + 1 } });
+  }
+  revalidatePath("/kpi/targets");
+  return {};
+}
+
+export async function deleteKpiTargetTemplate(id: number): Promise<ActionResult> {
+  const me = await getSessionUser();
+  if (!me) return NOT_LOGGED_IN;
+  if (!can(me, "kpi")) return NO_PERMISSION;
+  if ((await prisma.kpiTargetTemplate.count()) <= 1) return { error: "Cần giữ lại ít nhất một mẫu." };
+  await prisma.kpiTargetTemplate.delete({ where: { id } });
+  revalidatePath("/kpi/targets");
+  return {};
+}
+
+/**
+ * Áp mẫu bộ chỉ tiêu cho nhiều nhân viên trong tháng: thay toàn bộ chỉ tiêu tháng đó của những người được chọn.
+ * Không tự áp cho mình (trừ admin) — giống saveKpiTargets.
+ */
+export async function applyKpiTargetTemplate(fd: FormData): Promise<ActionResult> {
+  const me = await getSessionUser();
+  if (!me) return NOT_LOGGED_IN;
+  if (!can(me, "kpi")) return NO_PERMISSION;
+  const month = str(fd, "month");
+  if (!isValidMonth(month)) return { error: "Tháng không hợp lệ." };
+  const template = await prisma.kpiTargetTemplate.findUnique({ where: { id: Number(str(fd, "templateId")) || 0 } });
+  if (!template) return { error: "Không tìm thấy mẫu." };
+  const targets = parseTemplateTargets(template.targets);
+  if (!targets.length) return { error: "Mẫu chưa có chỉ tiêu nào." };
+  const userIds = [...new Set(fd.getAll("userIds").map(Number))].filter((id) => Number.isInteger(id) && id > 0);
+  if (!userIds.length) return { error: "Chọn ít nhất một nhân viên." };
+  if (!isAdmin(me) && userIds.includes(me.id)) return { error: "Không thể tự đặt chỉ tiêu KPI cho chính mình." };
+  const users = await prisma.user.findMany({ where: { id: { in: userIds }, role: "STAFF" }, select: { id: true } });
+  if (users.length !== userIds.length) return { error: "Chỉ đặt KPI cho tài khoản nhân viên." };
+
+  await prisma.$transaction([
+    prisma.kpiTarget.deleteMany({ where: { month, userId: { in: userIds } } }),
+    prisma.kpiTarget.createMany({
+      data: userIds.flatMap((userId) => targets.map((t) => ({ ...t, active: true, month, userId, updatedBy: me.name }))),
+    }),
+  ]);
+  revalidatePath("/kpi", "layout");
+  revalidatePath("/my-kpi");
+  return {};
+}
+
+/** Chép chỉ tiêu tháng trước sang tháng này cho những nhân viên tháng này chưa có chỉ tiêu nào. */
+export async function copyKpiTargets(month: string): Promise<ActionResult> {
+  const me = await getSessionUser();
+  if (!me) return NOT_LOGGED_IN;
+  if (!can(me, "kpi")) return NO_PERMISSION;
+  if (!isValidMonth(month)) return { error: "Tháng không hợp lệ." };
+
+  const [prev, current] = await Promise.all([
+    prisma.kpiTarget.findMany({ where: { month: addMonths(month, -1), user: { active: true, role: "STAFF" } } }),
+    prisma.kpiTarget.findMany({ where: { month }, select: { userId: true } }),
+  ]);
+  const has = new Set(current.map((t) => t.userId));
+  // Không tự chép chỉ tiêu cho chính mình (giống saveKpiTargets)
+  const rows = prev.filter((t) => !has.has(t.userId) && (isAdmin(me) || t.userId !== me.id));
+  if (!rows.length) return { error: "Không có chỉ tiêu tháng trước để chép (hoặc mọi nhân viên đã có chỉ tiêu tháng này)." };
+  await prisma.kpiTarget.createMany({
+    data: rows.map((t) => ({
+      month,
+      userId: t.userId,
+      metric: t.metric,
+      target: t.target,
+      weight: t.weight,
+      active: t.active,
+      updatedBy: me.name,
+    })),
+  });
+  revalidatePath("/kpi", "layout");
+  revalidatePath("/my-kpi");
+  return {};
+}
+
+/**
+ * Đọc form cấu hình thưởng (dùng chung cho cấu hình tháng và mẫu cấu hình):
+ * A: thưởng theo phần (cộng dồn các phần đạt, mỗi phần là nhóm điều kiện) — JSON `parts`.
+ * B / C: mỗi nhóm hàng chọn một cách (hoa hồng doanh thu hoặc % lãi gộp). `maxTotal`: trần tổng thưởng.
+ * Chỉ tiêu mặc định khi đặt KPI: `tw_<chỉ tiêu>` (trọng số, 0 = không bật sẵn) + `targetGrowthPct`.
+ */
+function parseBonusForm(fd: FormData) {
+  const partsEnabled = str(fd, "partsEnabled") === "on";
+  const maxRaw = str(fd, "maxTotal").replace(/\D/g, "");
+  const maxTotal = maxRaw ? Number(maxRaw) : null;
+  if (maxTotal != null && (!Number.isSafeInteger(maxTotal) || maxTotal <= 0))
+    return { error: "Mức thưởng tối đa phải lớn hơn 0 (để trống = không giới hạn)." };
+
+  let rawParts: unknown;
+  try {
+    rawParts = JSON.parse(str(fd, "parts") || "[]");
+  } catch {
+    return { error: "Dữ liệu phần thưởng không hợp lệ." };
+  }
+  if (!Array.isArray(rawParts) || rawParts.length > 6) return { error: "Tối đa 6 phần thưởng." };
+  const parts: BonusPart[] = [];
+  for (const [i, p] of rawParts.entries()) {
+    const name = String(p?.name ?? "").trim();
+    const amount = Number(p?.amount);
+    if (!name || name.length > 80) return { error: `Phần ${i + 1}: vui lòng nhập tên (tối đa 80 ký tự).` };
+    if (!Number.isSafeInteger(amount) || amount <= 0) return { error: `Phần "${name}": tiền thưởng phải lớn hơn 0.` };
+    if (!Array.isArray(p?.conditions) || !p.conditions.length) return { error: `Phần "${name}": cần ít nhất một điều kiện.` };
+    const conditions: Condition[] = [];
+    for (const c of p.conditions) {
+      const type = String(c?.type);
+      if (!isConditionType(type)) return { error: `Phần "${name}": điều kiện không hợp lệ.` };
+      const value = type === "OWNER_REVIEW" ? 0 : Number(c?.value);
+      if (!Number.isFinite(value) || value < 0 || (type !== "CASH_SHORT_MAX" && value > 1000))
+        return { error: `Phần "${name}": giá trị điều kiện không hợp lệ.` };
+      if (type === "METRIC_PCT") {
+        if (!isMetric(String(c?.metric))) return { error: `Phần "${name}": chọn chỉ tiêu cho điều kiện.` };
+        conditions.push({ type, metric: c.metric, value });
+      } else conditions.push({ type, value });
+    }
+    parts.push({ name, amount, requiresFirst: i > 0 && !!p?.requiresFirst, conditions });
+  }
+  if (partsEnabled && !parts.length) return { error: "Thêm ít nhất một phần thưởng (hoặc tắt thưởng theo phần)." };
+
+  // Mỗi nhóm hàng một cách thưởng (hoa hồng HOẶC lãi gộp) → không thưởng hai lần cho cùng khoản doanh thu
+  const groups: Record<string, Prisma.InputJsonValue> = {};
+  for (const { key, label } of BONUS_GROUPS) {
+    const mode = str(fd, `mode_${key}`);
+    if (mode === "COMMISSION") {
+      const froms = fd.getAll(`commFrom_${key}`).map((v) => String(v).replace(/\D/g, ""));
+      const rates = fd.getAll(`commRate_${key}`).map((v) => String(v).trim());
+      const commission: { fromRevenue: number; ratePct: number }[] = [];
+      for (let i = 0; i < rates.length; i++) {
+        if (!rates[i]) {
+          if (froms[i] && froms[i] !== "0") return { error: `${label}: bậc ${i + 1} chưa nhập % hoa hồng.` };
+          continue;
+        }
+        const ratePct = Number(rates[i]);
+        if (!Number.isFinite(ratePct) || ratePct < 0 || ratePct > 100) return { error: `${label}: % hoa hồng từ 0 đến 100.` };
+        commission.push({ fromRevenue: Number(froms[i] || 0), ratePct });
+      }
+      if (!commission.length) return { error: `${label}: nhập ít nhất một mức % hoa hồng.` };
+      commission.sort((a, b) => a.fromRevenue - b.fromRevenue);
+      if (commission.some((c, i) => i > 0 && c.fromRevenue === commission[i - 1].fromRevenue))
+        return { error: `${label}: hai bậc hoa hồng trùng mức doanh thu.` };
+      groups[key] = { mode, commission };
+    } else if (mode === "PROFIT") {
+      const profitPct = Number(str(fd, `profitPct_${key}`));
+      if (!str(fd, `profitPct_${key}`) || !Number.isFinite(profitPct) || profitPct <= 0 || profitPct > 100)
+        return { error: `${label}: % lãi gộp phải lớn hơn 0 và tối đa 100.` };
+      groups[key] = { mode, profitPct };
+    }
+  }
+
+  const targetWeights: Record<string, number> = {};
+  for (const m of KPI_METRICS) {
+    const w = Number(str(fd, `tw_${m.key}`) || 0);
+    if (!Number.isInteger(w) || w < 0 || w > 10) return { error: `Trọng số mặc định "${m.label}" từ 0 đến 10.` };
+    if (w > 0) targetWeights[m.key] = w;
+  }
+  const targetGrowthPct = Number(str(fd, "targetGrowthPct") || 105);
+  if (!Number.isInteger(targetGrowthPct) || targetGrowthPct < 50 || targetGrowthPct > 300)
+    return { error: "Mức chỉ tiêu gợi ý so với TB 3 tháng phải từ 50% đến 300%." };
+
+  return {
+    data: {
+      parts: parts as unknown as Prisma.InputJsonValue,
+      partsEnabled,
+      maxTotal,
+      groups,
+      targetWeights,
+      targetGrowthPct,
+    },
+  };
+}
+
+/** Cấu hình thưởng, áp dụng từ tháng đã chọn cho tới tháng có cấu hình mới hơn. Chỉ admin. */
+export async function saveKpiBonusConfig(fd: FormData): Promise<ActionResult> {
+  const me = await getSessionUser();
+  if (!me) return NOT_LOGGED_IN;
+  if (!isAdmin(me)) return NO_PERMISSION;
+  const fromMonth = str(fd, "fromMonth");
+  if (!isValidMonth(fromMonth)) return { error: "Tháng áp dụng không hợp lệ." };
+  const parsed = parseBonusForm(fd);
+  if ("error" in parsed) return { error: parsed.error };
+
+  const data = { ...parsed.data, updatedBy: me.name };
+  await prisma.kpiBonusConfig.upsert({ where: { fromMonth }, update: data, create: { fromMonth, ...data } });
+  revalidatePath("/kpi", "layout");
+  revalidatePath("/my-kpi");
+  return {};
+}
+
+/** Thêm / sửa mẫu cấu hình thưởng (Quán mới mở, Mùa cao điểm...). Chỉ admin. Sửa mẫu không đổi tháng đã cấu hình. */
+export async function saveKpiTemplate(fd: FormData): Promise<ActionResult> {
+  const me = await getSessionUser();
+  if (!me) return NOT_LOGGED_IN;
+  if (!isAdmin(me)) return NO_PERMISSION;
+  const id = Number(str(fd, "id")) || null;
+  const name = str(fd, "name");
+  if (!name || name.length > 60) return { error: "Vui lòng nhập tên mẫu (tối đa 60 ký tự)." };
+  // So sánh trong JS: Postgres (collation C) không bỏ qua hoa / thường của chữ có dấu tiếng Việt ("ổ" ≠ "Ổ")
+  const key = (v: string) => v.normalize("NFC").toLocaleLowerCase("vi");
+  const dup = (await prisma.kpiTemplate.findMany({ select: { id: true, name: true } })).find((t) => key(t.name) === key(name));
+  if (dup && dup.id !== id) return { error: "Tên mẫu đã có." };
+  const parsed = parseBonusForm(fd);
+  if ("error" in parsed) return { error: parsed.error };
+
+  const data = { ...parsed.data, name, description: optional(fd, "description"), updatedBy: me.name };
+  if (id) await prisma.kpiTemplate.update({ where: { id }, data });
+  else {
+    const last = await prisma.kpiTemplate.aggregate({ _max: { sortOrder: true } });
+    await prisma.kpiTemplate.create({ data: { ...data, sortOrder: (last._max.sortOrder ?? 0) + 1 } });
+  }
+  revalidatePath("/kpi/bonus");
+  return {};
+}
+
+export async function deleteKpiTemplate(id: number): Promise<ActionResult> {
+  const me = await getSessionUser();
+  if (!me) return NOT_LOGGED_IN;
+  if (!isAdmin(me)) return NO_PERMISSION;
+  // Xoá hết mẫu thì trang sẽ tạo lại bộ mẫu sẵn — giữ ít nhất một mẫu
+  if ((await prisma.kpiTemplate.count()) <= 1) return { error: "Cần giữ lại ít nhất một mẫu." };
+  await prisma.kpiTemplate.delete({ where: { id } });
+  revalidatePath("/kpi/bonus");
+  return {};
+}
+
+/**
+ * Đánh giá của chủ quán cho nhân viên trong tháng (điều kiện "Chủ quán đánh giá Đạt"). Quyền `kpi`, không tự
+ * đánh giá mình. Không đạt thì bắt buộc ghi lý do để nhân viên biết cần cải thiện gì.
+ */
+export async function saveKpiReview(fd: FormData): Promise<ActionResult> {
+  const me = await getSessionUser();
+  if (!me) return NOT_LOGGED_IN;
+  if (!can(me, "kpi")) return NO_PERMISSION;
+  const month = str(fd, "month");
+  const userId = Number(str(fd, "userId")) || 0;
+  const result = str(fd, "result");
+  const note = optional(fd, "note");
+  if (!isValidMonth(month)) return { error: "Tháng không hợp lệ." };
+  if (!isAdmin(me) && userId === me.id) return { error: "Không thể tự đánh giá chính mình." };
+  if (result !== "PASS" && result !== "FAIL") return { error: "Vui lòng chọn Đạt hoặc Không đạt." };
+  if (result === "FAIL" && !note) return { error: "Không đạt thì ghi lý do để nhân viên biết cần cải thiện gì." };
+  const user = await prisma.user.findUnique({ where: { id: userId }, select: { role: true } });
+  if (user?.role !== "STAFF") return { error: "Không tìm thấy nhân viên." };
+
+  const data = { passed: result === "PASS", note, reviewedBy: me.name };
+  await prisma.kpiReview.upsert({
+    where: { month_userId: { month, userId } },
+    update: data,
+    create: { month, userId, ...data },
+  });
+  revalidatePath("/kpi", "layout");
+  revalidatePath("/my-kpi");
+  return {};
+}
+
+
+/** Phân loại đơn bán gõ tay (Điện thoại / Phụ kiện) để tính đúng chỉ tiêu KPI. Không đổi tiền nên ca đã chốt vẫn sửa được. */
+export async function setTransactionCategory(id: number, category: string): Promise<ActionResult> {
+  const me = await getSessionUser();
+  if (!me) return NOT_LOGGED_IN;
+  if (!can(me, "kpi")) return NO_PERMISSION;
+  if (category !== "PHONE" && category !== "ACCESSORY") return { error: "Loại hàng không hợp lệ." };
+  const tx = await prisma.transaction.findUnique({ where: { id }, select: { kind: true } });
+  if (!tx || tx.kind !== "SALE") return { error: "Không tìm thấy đơn bán hàng." };
+  await prisma.transaction.update({ where: { id }, data: { category } });
+  revalidatePath("/kpi", "layout");
+  revalidatePath("/my-kpi");
   return {};
 }

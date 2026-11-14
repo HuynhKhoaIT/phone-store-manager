@@ -118,7 +118,6 @@ export default async function ChecklistPage({ searchParams }: { searchParams: Pr
         </FormDialog>
       )}
 
-
       <div className="card p-0 sm:p-0">
         {tasks.length === 0 ? (
           <p className="p-6 text-center text-slate-500">

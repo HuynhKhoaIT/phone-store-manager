@@ -386,6 +386,17 @@ function EditTransaction({
               <span>Bảo hành (tháng)</span>
               <input name="warrantyMonths" type="number" min={0} max={12} defaultValue={tx.warrantyMonths} className="input" />
             </label>
+            {/* Bán gõ tay: loại hàng để tính KPI (gắn sản phẩm thì theo sản phẩm) */}
+            {tx.kind === "SALE" && !tx.productId && (
+              <label className="field">
+                <span>Loại hàng</span>
+                <select name="category" defaultValue={tx.category ?? ""} className="input">
+                  {!tx.category && <option value="">Chưa phân loại</option>}
+                  <option value="PHONE">Điện thoại</option>
+                  <option value="ACCESSORY">Phụ kiện</option>
+                </select>
+              </label>
+            )}
           </>
         )}
         <label className="field">

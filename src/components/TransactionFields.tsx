@@ -50,6 +50,8 @@ export function TransactionFields({
   const [productId, setProductId] = useState("");
   const [productName, setProductName] = useState("");
   const [warranty, setWarranty] = useState(0);
+  // Bán gõ tay (không chọn gợi ý): nhân viên chọn Điện thoại / Phụ kiện để tính KPI
+  const [category, setCategory] = useState<"" | "PHONE" | "ACCESSORY">("");
   // Sửa chữa có nhiều loại linh kiện: gợi ý đang chọn + loại đã chọn
   const [repairPick, setRepairPick] = useState<PriceSuggestion | null>(null);
   const [variantId, setVariantId] = useState<number | null>(null);
@@ -125,6 +127,7 @@ export function TransactionFields({
       <input type="hidden" name="paymentMethod" value={payment} />
       <input type="hidden" name="productId" value={kind === "SALE" ? productId : ""} />
       <input type="hidden" name="repairPriceId" value={kind === "REPAIR" ? repairPriceId : ""} />
+      <input type="hidden" name="category" value={kind === "SALE" && !productId ? category : ""} />
       {installment && <input type="hidden" name="installment" value="1" />}
 
       {!installment && (
@@ -197,7 +200,21 @@ export function TransactionFields({
           </small>
         )}
         {kind === "SALE" && productName && !productId && (
-          <small className="text-amber-700">Không chọn từ danh sách hàng hoá — sẽ lưu theo tên đã gõ.</small>
+          <>
+            <small className="text-amber-700">Không chọn từ danh sách hàng hoá — sẽ lưu theo tên đã gõ.</small>
+            <div className="mt-1 flex flex-wrap items-center gap-2">
+              <span className="text-sm text-slate-600">Loại hàng *</span>
+              <Segmented
+                label="Loại hàng"
+                value={category}
+                onChange={setCategory}
+                options={[
+                  { value: "PHONE", label: "Điện thoại" },
+                  { value: "ACCESSORY", label: "Phụ kiện" },
+                ]}
+              />
+            </div>
+          </>
         )}
       </div>
       <label className="field">

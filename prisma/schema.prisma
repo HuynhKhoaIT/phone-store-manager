@@ -37,6 +37,10 @@ model Branch {
   ownedProducts Product[]        @relation("ProductOwner")
   loansLent     BranchLoan[]     @relation("LoanLender")
   loansBorrowed BranchLoan[]     @relation("LoanBorrower")
+  stockChecks   StockCheckItem[]
+  receiptsFrom  StockReceipt[]   @relation("ReceiptFrom")
+  receiptsTo    StockReceipt[]   @relation("ReceiptTo")
+  capitalSpends CapitalSpend[]
 }
 
 model User {
@@ -49,7 +53,7 @@ model User {
   branches     Branch[]         @relation("UserBranches")
   /// Quyền RIÊNG thêm cho nhân viên (khoá trong src/lib/permissions.ts), cộng với quyền của vai trò.
   /// Admin bỏ qua, luôn toàn quyền. Mặc định = quyền nhân viên có sẵn, để tài khoản cũ giữ nguyên khi thêm cột.
-  permissions  String[]         @default(["sell", "products", "repair-prices", "warranty", "timesheet"])
+  permissions  String[]         @default(["sell", "products", "repair-prices", "warranty", "timesheet", "kpi-self"])
   /// Vai trò (Bán hàng, Kế toán...) — quyền thực tế = quyền vai trò + `permissions`. null = chỉ quyền riêng
   staffRoleId  Int?
   staffRole    StaffRole?       @relation(fields: [staffRoleId], references: [id], onDelete: SetNull)
@@ -58,6 +62,9 @@ model User {
   shifts       Shift[]
   checks       ChecklistCheck[]
   posts        Post[]
+  kpiTargets   KpiTarget[]
+  kpiReviews   KpiReview[]
+  stockChecks  StockCheckItem[]
 }
 
 /// Vai trò nhân viên: một bộ quyền dùng chung (Bán hàng, Kế toán, Thủ kho...). Admin không thuộc vai trò nào.
@@ -102,6 +109,9 @@ model Transaction {
   productId       Int?
   product         Product?             @relation(fields: [productId], references: [id], onDelete: SetNull)
   productName     String
+  /// Bán hàng: PHONE | ACCESSORY — chụp từ Product.category khi chọn gợi ý, bán gõ tay thì nhân viên chọn.
+  /// null = đơn cũ / loại khác; KPI suy ra từ sản phẩm gắn kèm, không có thì "Chưa phân loại" (src/lib/kpi-metrics.ts)
+  category        String?
   loans           BranchLoan[]
   gifts           TransactionGift[]
   price           Int
@@ -162,26 +172,55 @@ model InstallmentPayment {
   @@index([shiftId])
 }
 
-/// Phiếu hàng hoá: nhập từ nhà cung cấp (IMPORT) hoặc chuyển giữa chi nhánh (TRANSFER).
+/// Phiếu hàng hoá (một lần nhập / chuyển gồm nhiều dòng hàng `StockTransfer`).
+/// Phiếu nhập ghi nguồn tiền: quỹ cửa hàng hoặc tiền riêng của một người góp vốn — khi đó tự ghi một dòng
+/// Góp vốn (`CapitalEntry.receiptId`) bằng tổng tiền phiếu vào chi nhánh nhận, xoá / sửa phiếu thì cập nhật theo.
+model StockReceipt {
+  id             Int             @id @default(autoincrement())
+  type           String          @default("IMPORT") // IMPORT | TRANSFER
+  date           String // YYYY-MM-DD
+  fromBranchId   Int? // null khi nhập từ nhà cung cấp
+  fromBranch     Branch?         @relation("ReceiptFrom", fields: [fromBranchId], references: [id])
+  toBranchId     Int
+  toBranch       Branch          @relation("ReceiptTo", fields: [toBranchId], references: [id])
+  supplier       String?
+  /// Phiếu nhập: STORE (quỹ cửa hàng) | INVESTOR (tiền của `investorId`) | null (chưa ghi — người nhập không có quyền góp vốn)
+  fundSource     String?
+  investorId     Int?
+  investor       Investor?       @relation(fields: [investorId], references: [id])
+  staffName      String // người ghi phiếu
+  note           String?
+  createdAt      DateTime        @default(now())
+  items          StockTransfer[]
+  capitalEntries CapitalEntry[]
+
+  @@index([date])
+}
+
+/// Một dòng hàng của phiếu: nhập từ nhà cung cấp (IMPORT) hoặc chuyển giữa chi nhánh (TRANSFER).
+/// Dòng cũ (trước khi có phiếu nhiều dòng) được gắn vào phiếu riêng lúc mở trang Phiếu nhập (`backfillReceipts`).
 model StockTransfer {
-  id           Int      @id @default(autoincrement())
-  type         String   @default("TRANSFER") // IMPORT | TRANSFER
+  id           Int           @id @default(autoincrement())
+  receiptId    Int?
+  receipt      StockReceipt? @relation(fields: [receiptId], references: [id], onDelete: Cascade)
+  type         String        @default("TRANSFER") // IMPORT | TRANSFER
   date         String // YYYY-MM-DD
   productId    Int? // sản phẩm chọn từ danh sách hàng hoá
-  product      Product? @relation(fields: [productId], references: [id], onDelete: SetNull)
+  product      Product?      @relation(fields: [productId], references: [id], onDelete: SetNull)
   productName  String
   quantity     Int
   fromBranchId Int? // null khi nhập từ nhà cung cấp
-  fromBranch   Branch?  @relation("TransferFrom", fields: [fromBranchId], references: [id])
+  fromBranch   Branch?       @relation("TransferFrom", fields: [fromBranchId], references: [id])
   toBranchId   Int
-  toBranch     Branch   @relation("TransferTo", fields: [toBranchId], references: [id])
+  toBranch     Branch        @relation("TransferTo", fields: [toBranchId], references: [id])
   supplier     String? // nhà cung cấp (phiếu nhập)
   unitCost     Int? // giá nhập / đơn vị (phiếu nhập, chỉ admin thấy)
   staffName    String?
   note         String?
-  createdAt    DateTime @default(now())
+  createdAt    DateTime      @default(now())
 
   @@index([date])
+  @@index([receiptId])
 }
 
 /// Quà tặng kèm một giao dịch bán (giá 0 đ). Trừ số lượng sản phẩm; giá nhập tính vào giá vốn giao dịch.
@@ -237,25 +276,59 @@ model Investor {
   active    Boolean        @default(true)
   createdAt DateTime       @default(now())
   entries   CapitalEntry[]
+  receipts  StockReceipt[]
+  spends    CapitalSpend[]
 }
 
 /// Sổ vốn: mỗi lần một người góp vốn vào / rút tiền ra khỏi một chi nhánh.
 /// Vốn đầu tư của chi nhánh = tổng tiền góp (CONTRIBUTE); rút (WITHDRAW) không phải chi phí nên không trừ vào lãi.
 model CapitalEntry {
-  id         Int      @id @default(autoincrement())
+  id         Int           @id @default(autoincrement())
   investorId Int
-  investor   Investor @relation(fields: [investorId], references: [id])
+  investor   Investor      @relation(fields: [investorId], references: [id])
   branchId   Int
-  branch     Branch   @relation(fields: [branchId], references: [id])
+  branch     Branch        @relation(fields: [branchId], references: [id])
   type       String // CONTRIBUTE (góp) | WITHDRAW (rút)
   date       String // YYYY-MM-DD
   amount     Int
   note       String?
+  /// Góp vốn bằng hàng: người góp tự bỏ tiền nhập phiếu này (tự tạo / xoá theo phiếu, không sửa tay)
+  receiptId  Int?
+  receipt    StockReceipt? @relation(fields: [receiptId], references: [id], onDelete: Cascade)
+  /// Góp vốn bằng vật tư / decor / xây dựng: người góp tự trả khoản chi này (tự tạo / xoá theo khoản chi)
+  spendId    Int?
+  spend      CapitalSpend? @relation(fields: [spendId], references: [id], onDelete: Cascade)
   createdBy  String
-  createdAt  DateTime @default(now())
+  createdAt  DateTime      @default(now())
 
   @@index([investorId])
   @@index([branchId])
+  @@index([receiptId])
+  @@index([spendId])
+}
+
+/// Tiền vốn chi cho vật tư, decor, xây dựng, thiết bị của chi nhánh (đầu tư một lần, KHÔNG phải chi phí tháng nên
+/// không trừ vào lãi). Cùng tiền hàng tồn kho cho biết vốn góp đang nằm ở đâu (Báo cáo › Tồn kho & vốn).
+/// Tiền riêng của người góp vốn → tự ghi một dòng Góp vốn (`CapitalEntry.spendId`), sửa / xoá khoản chi thì cập nhật theo.
+model CapitalSpend {
+  id             Int            @id @default(autoincrement())
+  date           String // YYYY-MM-DD
+  branchId       Int
+  branch         Branch         @relation(fields: [branchId], references: [id])
+  category       String // khoá trong SPEND_CATEGORIES (src/lib/capital-spend.ts)
+  description    String // VD: Tủ kính trưng bày, sơn tường, bảng hiệu
+  amount         Int
+  /// STORE (quỹ cửa hàng) | INVESTOR (tiền của `investorId`) | null (chưa ghi)
+  fundSource     String?
+  investorId     Int?
+  investor       Investor?      @relation(fields: [investorId], references: [id])
+  note           String?
+  createdBy      String
+  createdAt      DateTime       @default(now())
+  capitalEntries CapitalEntry[]
+
+  @@index([branchId])
+  @@index([date])
 }
 
 /// Chi phí vận hành (mặt bằng, lương, điện nước...) — trừ vào lãi gộp để ra lãi ròng ở trang Báo cáo.
@@ -303,6 +376,7 @@ model Product {
   gifts          TransactionGift[]
   transactions   Transaction[]
   stockTransfers StockTransfer[]
+  stockChecks    StockCheckItem[]
   note           String? // tình trạng, pin, bảo hành...
   /// --- Hiển thị trên web marketing (API công khai /api/public) ---
   showOnWeb      Boolean           @default(false) // chỉ sản phẩm bật cờ này mới xuất hiện trên web
@@ -381,6 +455,32 @@ model AdminCheck {
   @@unique([taskKey, period])
 }
 
+/// Thiết lập chung của cửa hàng — luôn chỉ 1 dòng (id = 1). Hiện chỉ có ngưỡng cảnh báo sắp hết hàng.
+model AppSetting {
+  id                Int @id @default(1)
+  /// Hàng đếm được (không phải máy có IMEI) còn <= số này thì liệt vào "sắp hết hàng" ở trang /stock-check.
+  /// 0 = chỉ báo hàng đã hết (quantity <= 0), không cảnh báo sắp hết.
+  lowStockThreshold Int @default(2)
+}
+
+/// Nhân viên đối chiếu từng sản phẩm trong ngày tại chi nhánh: Đủ hay Thiếu so với số lượng ghi trong hệ thống
+/// (trang /stock-check). Bấm lại cùng trạng thái để bỏ đánh dấu (chưa kiểm tra).
+model StockCheckItem {
+  id        Int      @id @default(autoincrement())
+  date      String // YYYY-MM-DD
+  branchId  Int
+  branch    Branch   @relation(fields: [branchId], references: [id])
+  productId Int
+  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  status    String // OK (đủ) | SHORT (thiếu)
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id])
+  checkedAt DateTime @default(now())
+
+  @@unique([date, branchId, productId])
+  @@index([date, branchId])
+}
+
 /// Thương hiệu sản phẩm (Samsung, Anker, Baseus...) — admin quản lý, chọn khi nhập phụ kiện / Android.
 model Brand {
   id        Int       @id @default(autoincrement())
@@ -443,4 +543,91 @@ model Promotion {
 
   @@index([slug])
   @@index([startDate])
+}
+
+/// Chỉ tiêu KPI của một nhân viên trong một tháng — mỗi (tháng, nhân viên, chỉ tiêu) một dòng.
+/// `metric` là khoá trong KPI_METRICS (src/lib/kpi-metrics.ts): cách tính + đơn vị cố định trong code.
+model KpiTarget {
+  id        Int      @id @default(autoincrement())
+  month     String // YYYY-MM
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  metric    String
+  target    Int // mục tiêu (đồng / máy / đơn / khách)
+  weight    Int      @default(1) // trọng số khi tính % hoàn thành chung
+  active    Boolean  @default(true) // tắt = giữ mục tiêu nhưng không tính
+  updatedBy String
+  updatedAt DateTime @updatedAt
+
+  @@unique([month, userId, metric])
+  @@index([month])
+}
+
+/// Cấu hình thưởng KPI, áp dụng từ `fromMonth` cho tới khi có cấu hình mới hơn.
+/// Chưa có dòng nào = dùng mặc định DEFAULT_BONUS (src/lib/kpi-metrics.ts).
+model KpiBonusConfig {
+  id              Int      @id @default(autoincrement())
+  fromMonth       String   @unique // YYYY-MM
+  /// Phương án A — thưởng theo PHẦN, cộng dồn các phần đạt được:
+  /// [{ "name": "Đạt chỉ tiêu cơ bản", "amount": 500000, "requiresFirst": false,
+  ///    "conditions": [{ "type": "COMPLETION_PCT", "value": 100 }, { "type": "METRIC_PCT", "metric": "GROSS_PROFIT", "value": 90 }] }, ...]
+  /// Đọc bằng parseParts (src/lib/kpi-metrics.ts)
+  parts           Json
+  partsEnabled    Boolean  @default(true) // tắt = không thưởng theo phần
+  /// Trần tổng thưởng một nhân viên / tháng (mọi khoản A + B + C); null = không giới hạn
+  maxTotal        Int?
+  /// Phương án B / C theo nhóm hàng (PHONE | ACCESSORY | REPAIR), mỗi nhóm chọn MỘT cách để không thưởng hai lần:
+  /// { "PHONE": { "mode": "COMMISSION", "commission": [{ "fromRevenue": 0, "ratePct": 1 }] }, "REPAIR": { "mode": "PROFIT", "profitPct": 10 } }
+  /// null / thiếu nhóm = không thưởng nhóm đó. Đọc bằng parseGroups (src/lib/kpi-metrics.ts)
+  groups          Json?
+  /// Chỉ tiêu bật sẵn khi đặt KPI lần đầu trong tháng: { "PHONE_COUNT": 2, "ACCESSORY_REVENUE": 1 } (khoá = chỉ tiêu, giá trị = trọng số).
+  /// null = DEFAULT_TARGET_WEIGHTS
+  targetWeights   Json?
+  /// Chỉ tiêu gợi ý = TB 3 tháng trước × % này (105 = tăng 5%)
+  targetGrowthPct Int      @default(105)
+  updatedBy       String
+  updatedAt       DateTime @updatedAt
+}
+
+/// Mẫu cấu hình thưởng (Quán mới mở, Mùa cao điểm...) — admin sửa / thêm được; "Dùng mẫu" điền vào form cấu hình tháng.
+/// Cùng các trường cấu hình như KpiBonusConfig. Tạo sẵn từ KPI_TEMPLATE_PRESETS khi chưa có mẫu nào.
+model KpiTemplate {
+  id              Int      @id @default(autoincrement())
+  name            String   @unique
+  description     String?
+  parts           Json
+  partsEnabled    Boolean  @default(true)
+  maxTotal        Int?
+  groups          Json?
+  targetWeights   Json?
+  targetGrowthPct Int      @default(105)
+  sortOrder       Int      @default(0)
+  updatedBy       String
+  updatedAt       DateTime @updatedAt
+}
+
+/// Mẫu bộ chỉ tiêu (Bán hàng – quán mới, Kỹ thuật sửa chữa...) — áp cho một / nhiều nhân viên ở /kpi/targets.
+/// `targets`: [{ "metric": "PHONE_COUNT", "target": 10, "weight": 2 }, ...]. Tạo sẵn từ TARGET_TEMPLATE_PRESETS khi chưa có mẫu nào.
+model KpiTargetTemplate {
+  id          Int      @id @default(autoincrement())
+  name        String   @unique
+  description String?
+  targets     Json
+  sortOrder   Int      @default(0)
+  updatedBy   String
+  updatedAt   DateTime @updatedAt
+}
+
+/// Đánh giá của chủ quán cho nhân viên trong tháng (điều kiện "Chủ quán đánh giá Đạt" của thưởng theo phần).
+model KpiReview {
+  id         Int      @id @default(autoincrement())
+  month      String // YYYY-MM
+  userId     Int
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  passed     Boolean
+  note       String? // bắt buộc khi Không đạt — để nhân viên biết cần cải thiện gì
+  reviewedBy String
+  updatedAt  DateTime @updatedAt
+
+  @@unique([month, userId])
 }

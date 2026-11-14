@@ -8,6 +8,7 @@ export const TAGS = {
   prices: "prices",
   posts: "posts",
   promotions: "promotions",
+  settings: "settings",
 } as const;
 
 /**

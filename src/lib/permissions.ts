@@ -32,12 +32,19 @@ export const PERMISSIONS = [
   { key: "repair-prices", group: "Bán hàng", label: "Giá sửa chữa", description: "Xem bảng giá sửa chữa" },
   { key: "warranty", group: "Bán hàng", label: "Bảo hành", description: "Tra cứu bảo hành theo SĐT" },
   { key: "timesheet", group: "Bán hàng", label: "Chấm công", description: "Xem ngày công của mình" },
+  { key: "kpi-self", group: "Bán hàng", label: "KPI của tôi", description: "Xem chỉ tiêu, tiến độ và thưởng dự kiến của mình" },
   { key: "dashboard", group: "Quản lý", label: "Dashboard", description: "Doanh thu mọi chi nhánh (lãi cần thêm quyền Giá nhập & lãi)" },
   { key: "history", group: "Quản lý", label: "Lịch sử", description: "Xem lại các ngày trước (chỉ xem)" },
   { key: "posts", group: "Quản lý", label: "Tin tức", description: "Viết, sửa, xoá bài trên web" },
   { key: "promotions", group: "Quản lý", label: "Khuyến mãi", description: "Tạo, sửa chương trình khuyến mãi" },
   { key: "checklist", group: "Quản lý", label: "Checklist", description: "Thiết lập việc cần làm hằng ngày" },
   { key: "brands", group: "Quản lý", label: "Thương hiệu", description: "Thêm, sửa thương hiệu" },
+  {
+    key: "kpi",
+    group: "Quản lý",
+    label: "KPI & thưởng",
+    description: "Xem KPI, xếp hạng, thưởng dự kiến của mọi nhân viên; đặt chỉ tiêu (không tự đặt cho mình); phân loại đơn bán",
+  },
   { key: "reports", group: "Tài chính", label: "Báo cáo", description: "Lãi lỗ, chi phí (thêm / sửa / xoá), xuất Excel" },
   { key: "capital", group: "Tài chính", label: "Hoà vốn & góp vốn", description: "Người góp vốn, sổ góp / rút, hoà vốn từng chi nhánh" },
   { key: "customers", group: "Tài chính", label: "Khách hàng", description: "Danh sách khách, lịch sử mua / sửa" },
@@ -53,7 +60,7 @@ export const PERMISSIONS = [
 export type Permission = (typeof PERMISSIONS)[number]["key"];
 
 /** Quyền mặc định của nhân viên mới — giữ đúng những gì nhân viên làm được trước khi có phân quyền. */
-export const DEFAULT_STAFF_PERMISSIONS: Permission[] = ["sell", "products", "repair-prices", "warranty", "timesheet"];
+export const DEFAULT_STAFF_PERMISSIONS: Permission[] = ["sell", "products", "repair-prices", "warranty", "timesheet", "kpi-self"];
 
 export const PERMISSION_GROUPS = [...new Set(PERMISSIONS.map((p) => p.group))];
 
