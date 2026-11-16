@@ -20,8 +20,15 @@ import { FormDialog } from "@/components/FormDialog";
 import { PageHeader } from "@/components/PageHeader";
 import { ShiftCard } from "./ShiftCard";
 
-export default async function DayPage({ params }: { params: Promise<{ date: string }> }) {
+export default async function DayPage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ date: string }>;
+  searchParams: Promise<{ nocost?: string }>;
+}) {
   const { date } = await params;
+  const sp = await searchParams;
   if (!isValidDate(date)) notFound();
 
   const me = await requireUser();
@@ -65,6 +72,11 @@ export default async function DayPage({ params }: { params: Promise<{ date: stri
   // Lãi chỉ admin xem — cùng công thức Dashboard / Báo cáo
   const canCost = can(me, "cost-prices");
   const dayProfit = canCost ? profitOf(shifts.flatMap((s) => s.transactions)) : null;
+  // Lọc giao dịch chưa có giá vốn (bán hàng / sửa chữa) để admin nhập tính lãi
+  const noCost = canCost && sp.nocost === "1";
+  const isMissingCost = (t: { kind: string; costPrice: number | null }) =>
+    (t.kind === "SALE" || t.kind === "REPAIR") && t.costPrice == null;
+  const missingCount = canCost ? shifts.flatMap((s) => s.transactions).filter(isMissingCost).length : 0;
   const hasOpenShift = shifts.some((s) => s.userId === me.id && !s.closedAt);
   // Chỉ nhân viên vào ca (admin chỉ xem / quản lý ca của nhân viên)
   const canOpenShift = !isAdmin && canSell && !hasOpenShift && date === today;
@@ -145,6 +157,23 @@ export default async function DayPage({ params }: { params: Promise<{ date: stri
         <Stat label="Chuyển khoản (CK)" value={formatVND(day.transfer)} />
       </div>
 
+      {canCost && (missingCount > 0 || noCost) && (
+        <div className="card flex flex-wrap items-center justify-between gap-2 p-3 text-sm">
+          <span className="text-amber-700">{missingCount} giao dịch chưa có giá vốn</span>
+          <span className="flex items-center gap-2">
+            <Link
+              href={noCost ? `/day/${date}` : `/day/${date}?nocost=1`}
+              className={noCost ? "btn-primary" : "btn-secondary"}
+            >
+              {noCost ? "Hiện tất cả" : "Chỉ hiện chưa có giá vốn"}
+            </Link>
+            <Link href={`/reports/missing-cost?from=${date}&to=${date}`} className="btn-secondary">
+              Nhập giá vốn
+            </Link>
+          </span>
+        </div>
+      )}
+
       {promotions.length > 0 && (
         <div className="card space-y-2">
           <p className="flex items-center gap-1.5 text-sm font-semibold">
@@ -187,6 +216,7 @@ export default async function DayPage({ params }: { params: Promise<{ date: stri
         <ShiftCard
           key={s.id}
           shift={s}
+          onlyMissingCost={noCost}
           canEdit={!s.closedAt && (isAdmin || (canSell && s.userId === me.id && date === today))}
           canEditTx={can(me, "edit-transactions")}
           isAdmin={isAdmin}
