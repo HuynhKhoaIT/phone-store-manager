@@ -17,6 +17,7 @@ export function ShiftCard({
   canEditTx,
   isAdmin,
   canCost,
+  onlyMissingCost = false,
   defaultCheckOut,
   checklistLeft,
   bankAccounts,
@@ -36,6 +37,8 @@ export function ShiftCard({
   isAdmin: boolean;
   /** Xem lãi (quyền "Giá nhập & lãi") */
   canCost: boolean;
+  /** Chỉ liệt kê giao dịch chưa có giá vốn (tổng tiền ca vẫn tính đủ) */
+  onlyMissingCost?: boolean;
   defaultCheckOut: string;
   checklistLeft: number;
   bankAccounts: string[];
@@ -53,6 +56,9 @@ export function ShiftCard({
   const diff = (shift.handoverCash ?? 0) - expectedCash;
   // Lãi chỉ admin xem (giá nhập là dữ liệu nội bộ) — cùng công thức Dashboard / Báo cáo
   const profit = canCost ? profitOf(shift.transactions) : null;
+  const txs = onlyMissingCost
+    ? shift.transactions.filter((t) => (t.kind === "SALE" || t.kind === "REPAIR") && t.costPrice == null)
+    : shift.transactions;
 
   return (
     <section className="card space-y-4">
@@ -164,11 +170,11 @@ export function ShiftCard({
         <Line label="Tiền mặt phải có" value={formatVND(expectedCash)} bold />
       </div>
 
-      {shift.transactions.length > 0 ? (
+      {txs.length > 0 ? (
         <>
         {/* Điện thoại: dạng danh sách */}
         <ul className="divide-y divide-slate-100 rounded-lg border border-slate-200 sm:hidden">
-          {shift.transactions.map((t) => (
+          {txs.map((t) => (
             <li key={t.id} className="space-y-1.5 p-3">
               <div className="flex items-start justify-between gap-3">
                 <p className="min-w-0 font-medium">{t.productName}</p>
@@ -227,7 +233,7 @@ export function ShiftCard({
               </tr>
             </thead>
             <tbody>
-              {shift.transactions.map((t) => (
+              {txs.map((t) => (
                 <tr key={t.id}>
                   <td className="text-slate-500 tabular-nums">{formatTimeVN(t.createdAt)}</td>
                   <td>
@@ -276,7 +282,7 @@ export function ShiftCard({
         </div>
         </>
       ) : (
-        <p className="text-sm text-slate-500">Chưa có giao dịch nào.</p>
+        <p className="text-sm text-slate-500">{onlyMissingCost ? "Không có giao dịch nào thiếu giá vốn." : "Chưa có giao dịch nào."}</p>
       )}
 
       {shift.financePayments.length > 0 && (
