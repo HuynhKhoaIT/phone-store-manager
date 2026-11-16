@@ -167,7 +167,7 @@ export default async function DayPage({
             >
               {noCost ? "Hiện tất cả" : "Chỉ hiện chưa có giá vốn"}
             </Link>
-            <Link href={`/reports/missing-cost?from=${date}&to=${date}`} className="btn-secondary">
+            <Link href={`/reports/missing-cost?from=${date}&to=${date}&branch=${branch.id}`} className="btn-secondary">
               Nhập giá vốn
             </Link>
           </span>

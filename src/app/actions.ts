@@ -1258,6 +1258,18 @@ export async function saveProduct(fd: FormData): Promise<ActionResult> {
   };
   if (id) await prisma.product.update({ where: { id }, data });
   else await prisma.product.create({ data });
+  // Có giá nhập → điền luôn cho các đơn đã bán của sản phẩm này còn thiếu giá vốn (không đụng đơn đã có)
+  if (id && costPrice != null) {
+    const filled = await prisma.transaction.updateMany({
+      where: { productId: id, costPrice: null, kind: { in: ["SALE", "REPAIR"] } },
+      data: { costPrice },
+    });
+    if (filled.count > 0) {
+      revalidatePath("/reports", "layout");
+      revalidatePath("/dashboard");
+      revalidatePath("/day", "layout");
+    }
+  }
   revalidateTag(TAGS.prices);
   revalidatePath("/products");
   return {};
