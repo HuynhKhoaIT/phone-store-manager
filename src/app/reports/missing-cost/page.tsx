@@ -61,6 +61,19 @@ export default async function MissingCostPage({ searchParams }: { searchParams: 
     ...base,
     ...(q && { productName: { contains: q, mode: "insensitive" } }),
   };
+  // Sản phẩm đã được nhập giá nhập sau khi bán → điền giá vốn cho các đơn còn thiếu (đơn cũ trước khi có đồng bộ)
+  const stale = await prisma.transaction.findMany({
+    where: { ...base, productId: { not: null }, product: { costPrice: { not: null } } },
+    select: { productId: true, product: { select: { costPrice: true } } },
+  });
+  if (stale.length > 0) {
+    const costs = new Map(stale.map((t) => [t.productId!, t.product!.costPrice!]));
+    await Promise.all(
+      [...costs].map(([productId, costPrice]) =>
+        prisma.transaction.updateMany({ where: { productId, costPrice: null, kind: { in: ["SALE", "REPAIR"] } }, data: { costPrice } }),
+      ),
+    );
+  }
   const [agg, frequent] = await Promise.all([
     prisma.transaction.aggregate({ where, _count: true, _sum: { price: true } }),
     // Tên gõ tay bán lặp lại → nên thêm vào Hàng hoá để lần sau có sẵn giá nhập

@@ -1036,8 +1036,18 @@ export async function addStockReceipt(fd: FormData): Promise<ActionResult> {
           },
         });
         if (!l.product) continue;
-        // Phiếu nhập có giá nhập → cập nhật giá nhập mới nhất cho sản phẩm
-        if (l.unitCost != null) await db.product.update({ where: { id: l.product.id }, data: { costPrice: l.unitCost } });
+        // Phiếu nhập có giá nhập → cập nhật giá vốn sản phẩm.
+        // Máy có IMEI: giá của chính máy đó. Hàng đếm số lượng: bình quân gia quyền với phần tồn hiện có
+        // (tồn ≤ 0 hoặc chưa có giá vốn thì lấy luôn giá nhập mới). Đọc lại từ DB vì cùng sản phẩm có thể có 2 dòng.
+        if (l.unitCost != null) {
+          const cur = await db.product.findUnique({ where: { id: l.product.id }, select: { quantity: true, costPrice: true } });
+          const stock = cur?.quantity ?? 0;
+          const costPrice =
+            !isSingleUnit(l.product) && type === "IMPORT" && cur?.costPrice != null && stock > 0
+              ? Math.round((stock * cur.costPrice + l.quantity * l.unitCost) / (stock + l.quantity))
+              : l.unitCost;
+          await db.product.update({ where: { id: l.product.id }, data: { costPrice } });
+        }
         await moveStock(db, l.product, type, l.quantity, fromBranchId, toBranchId);
       }
       if (fund.investorId)
@@ -1258,6 +1268,18 @@ export async function saveProduct(fd: FormData): Promise<ActionResult> {
   };
   if (id) await prisma.product.update({ where: { id }, data });
   else await prisma.product.create({ data });
+  // Có giá nhập → điền luôn cho các đơn đã bán của sản phẩm này còn thiếu giá vốn (không đụng đơn đã có)
+  if (id && costPrice != null) {
+    const filled = await prisma.transaction.updateMany({
+      where: { productId: id, costPrice: null, kind: { in: ["SALE", "REPAIR"] } },
+      data: { costPrice },
+    });
+    if (filled.count > 0) {
+      revalidatePath("/reports", "layout");
+      revalidatePath("/dashboard");
+      revalidatePath("/day", "layout");
+    }
+  }
   revalidateTag(TAGS.prices);
   revalidatePath("/products");
   return {};
