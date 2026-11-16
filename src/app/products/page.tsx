@@ -28,7 +28,7 @@ import { AutoSubmitSelect } from "@/components/AutoSubmitSelect";
 import { Pagination } from "@/components/Pagination";
 import { getPaging, pageHref } from "@/lib/paging";
 
-type Search = { cat?: string; q?: string; cond?: string; edit?: string; status?: string; brand?: string; page?: string };
+type Search = { cat?: string; q?: string; cond?: string; edit?: string; status?: string; brand?: string; nocost?: string; page?: string };
 
 const STATUS_WHERE: Record<ProductStatus, Prisma.ProductWhereInput> = {
   AVAILABLE: { active: true, soldBranchId: null },
@@ -53,6 +53,8 @@ export default async function PricesPage({ searchParams }: { searchParams: Promi
   const cat = sp.cat && CATEGORY_LABEL[sp.cat] ? sp.cat : "";
   const cond = sp.cond === "NEW" || sp.cond === "USED" ? sp.cond : "";
   const q = sp.q?.trim() ?? "";
+  // Lọc hàng chưa nhập giá vốn (chỉ người có quyền xem giá nhập)
+  const noCost = canCost && sp.nocost === "1";
   // Nhân viên xem được "Đang bán" và "Đã bán"; "Ngừng bán" chỉ admin
   const statusOptions: ProductStatus[] = isAdmin ? ["AVAILABLE", "SOLD", "HIDDEN"] : ["AVAILABLE", "SOLD"];
   const status = statusOptions.find((s) => s === sp.status) ?? "AVAILABLE";
@@ -75,6 +77,7 @@ export default async function PricesPage({ searchParams }: { searchParams: Promi
     ...(cat && { category: cat }),
     ...(cond && { condition: cond }),
     ...(brandId && { brandId }),
+    ...(noCost && { costPrice: null }),
     ...(q && {
       OR: [
         { name: { contains: q, mode: "insensitive" } },
@@ -111,6 +114,7 @@ export default async function PricesPage({ searchParams }: { searchParams: Promi
     q,
     status: status === "AVAILABLE" ? "" : status,
     brand: brandId ? String(brandId) : "",
+    nocost: noCost ? "1" : "",
   };
   // Giữ trang hiện tại để đóng hộp sửa vẫn ở đúng trang
   const qs = (patch: Partial<Search>) => {
@@ -257,6 +261,12 @@ export default async function PricesPage({ searchParams }: { searchParams: Promi
               </option>
             ))}
           </AutoSubmitSelect>
+          {canCost && (
+            <AutoSubmitSelect name="nocost" defaultValue={noCost ? "1" : ""} aria-label="Giá nhập" className="input sm:w-48">
+              <option value="">Mọi giá nhập</option>
+              <option value="1">Chưa nhập giá vốn</option>
+            </AutoSubmitSelect>
+          )}
           {brands.length > 0 && cat !== "IPHONE" && (
             <AutoSubmitSelect name="brand" defaultValue={brandId ?? ""} aria-label="Thương hiệu" className="input sm:w-44">
               <option value="">Mọi thương hiệu</option>
